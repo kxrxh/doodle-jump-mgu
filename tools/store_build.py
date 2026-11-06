@@ -29,7 +29,8 @@ def download(url,sha256,target):
     target.parent.mkdir(parents=True,exist_ok=True)
     temporary=target.with_suffix('.tmp')
     try:
-        with urllib.request.urlopen(url,timeout=300) as source,temporary.open('wb') as output:
+        request=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0'})
+        with urllib.request.urlopen(request,timeout=300) as source,temporary.open('wb') as output:
             shutil.copyfileobj(source,output,CHUNK)
         if digest(temporary)!=sha256:raise ValueError('Download SHA-256 mismatch: '+url)
         temporary.replace(target)

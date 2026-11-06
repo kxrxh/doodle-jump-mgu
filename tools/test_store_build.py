@@ -62,5 +62,17 @@ class StoreBuildTests(unittest.TestCase):
                     build.download('https://example.test/runtime.pack',hashlib.sha256(b'expected').hexdigest(),target)
             self.assertEqual(target.read_bytes(),b'old')
 
+    def test_download_uses_a_client_header_accepted_by_the_game_cdn(self):
+        build=self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'game.apk'
+            with patch('urllib.request.urlopen',return_value=io.BytesIO(b'game')) as fetch:
+                build.download('https://example.test/game.apk',hashlib.sha256(b'game').hexdigest(),target)
+            import urllib.request
+            request=fetch.call_args[0][0]
+            self.assertIsInstance(request,urllib.request.Request)
+            self.assertTrue(request.get_header('User-agent','').startswith('Mozilla/'))
+            self.assertEqual(target.read_bytes(),b'game')
+
 
 if __name__=='__main__':unittest.main()
