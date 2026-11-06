@@ -28,6 +28,7 @@ def main():
             source.extractall(BUNDLE,filter='data')
     command=['docker','run','--rm','--platform','linux/amd64','-v',f'{ROOT}:/work','-w','/work',IMAGE]
     subprocess.run(command+['/work/bundle/python/bin/python3.13','-m','pip','install','--no-cache-dir','-r','requirements.txt'],check=True)
+    # Preserve the upstream BOLT interpreter: another strip pass breaks its load segments.
     if not (BUNDLE/'raster.so').exists() or (ROOT/'raster.c').stat().st_mtime>(BUNDLE/'raster.so').stat().st_mtime:
         subprocess.run(command+['sh','-c','apt-get update -qq && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/tmp/build.log && cc -shared -fPIC -O3 raster.c -o bundle/raster.so -lm'],check=True)
     for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery'):

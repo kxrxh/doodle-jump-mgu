@@ -6,7 +6,8 @@ python/lib/tcl*/*
 python/lib/tk*/*
 python/lib/libtcl*
 python/lib/libtk*
-python/lib/libpython3.13.so
+# The interpreter embeds Python; no shipped extension links these shared copies.
+python/lib/libpython3*.so*
 python/bin/python
 python/bin/python3
 python/bin/*config
@@ -19,6 +20,23 @@ python/lib/python3.13/site-packages/unicorn/lib/libunicorn.a
 python/lib/python3.13/ensurepip/*
 python/lib/python3.13/idlelib/*
 python/lib/python3.13/tkinter/*
+python/lib/python3.13/pydoc_data/*
+python/lib/python3.13/lib-dynload/_dbm*
+python/lib/python3.13/lib-dynload/readline*
+# Game text uses its PNG atlas, with no AVIF, WebP, color management or TrueType calls.
+python/lib/python3.13/site-packages/PIL/_avif*
+python/lib/python3.13/site-packages/PIL/_webp*
+python/lib/python3.13/site-packages/PIL/_imagingcms*
+python/lib/python3.13/site-packages/PIL/_imagingft*
+python/lib/python3.13/site-packages/PIL/_imagingtk*
+python/lib/python3.13/site-packages/pillow.libs/libavif*
+python/lib/python3.13/site-packages/pillow.libs/libwebp*
+python/lib/python3.13/site-packages/pillow.libs/libsharpyuv*
+python/lib/python3.13/site-packages/pillow.libs/liblcms2*
+python/lib/python3.13/site-packages/pillow.libs/libfreetype*
+python/lib/python3.13/site-packages/pillow.libs/libharfbuzz*
+python/lib/python3.13/site-packages/pillow.libs/libbrotli*
+python/lib/python3.13/site-packages/pillow.libs/libpng16*
 */__pycache__/*
 *.pyc
 original/*

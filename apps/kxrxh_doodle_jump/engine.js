@@ -39,6 +39,16 @@ function mkdir(directory) {
     try { fs.mkdirSync(directory); } catch (error) { if (error.code !== 'EEXIST') throw error; }
 }
 
+function clearCache(directory) {
+    if (!fs.existsSync(directory)) return;
+    if (fs.lstatSync(directory).isSymbolicLink()) throw new Error('Unsafe engine cache directory');
+    fs.readdirSync(directory).forEach((name) => {
+        const file=path.join(directory,name);
+        if (fs.lstatSync(file).isDirectory()) { clearCache(file); fs.rmdirSync(file); }
+        else fs.unlinkSync(file);
+    });
+}
+
 function unpack(file, directory) {
     const source = fs.readFileSync(file);
     const digest = crypto.createHash('sha256').update(source).digest('hex');
@@ -54,6 +64,10 @@ function unpack(file, directory) {
         if (destination.indexOf(root + path.sep) !== 0 || name.indexOf('\0') >= 0) throw new Error('Unsafe engine pack path');
         if (!Array.isArray(part) || part.length !== 2 || !part.every(Number.isSafeInteger) ||
             part[0] < 0 || part[1] < 0 || base + part[0] + part[1] > source.length) throw new Error('Invalid engine pack range');
+    });
+    clearCache(root);
+    Object.keys(index.files).forEach((name) => {
+        const destination=path.resolve(root,name),part=index.files[name];
         mkdir(path.dirname(destination));
         fs.writeFileSync(destination, zlib.inflateRawSync(source.slice(base + part[0], base + part[0] + part[1])));
     });

@@ -34,7 +34,13 @@ try {
     unpack(pack({'python/bin/python3.13':'executable','a/b/data':'original'}),out);
     assert.strictEqual(fs.readFileSync(path.join(out,'a/b/data'),'utf8'),'original');
     assert(fs.statSync(path.join(out,'python/bin/python3.13')).mode&0o100);
+    fs.writeFileSync(path.join(dir,'scores'),'saved score');
+    fs.writeFileSync(path.join(out,'a/b/obsolete'),'old runtime');
+    unpack(pack({'python/bin/python3.13':'updated','a/data':'new runtime'}),out);
+    assert(!fs.existsSync(path.join(out,'a/b/obsolete')),'updating removes obsolete runtime files');
+    assert.strictEqual(fs.readFileSync(path.join(dir,'scores'),'utf8'),'saved score','game saves outside the runtime survive');
     assert.throws(()=>unpack(pack({'../outside':'bad'}),out),/Unsafe/);
+    assert.strictEqual(fs.readFileSync(path.join(out,'a/data'),'utf8'),'new runtime','invalid packs do not clear the cache');
     assert(!fs.existsSync(path.join(dir,'outside')));
 } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 console.log('Engine pack extraction and traversal rejection: passed');

@@ -2,6 +2,8 @@
 
 Original Doodle Jump 3.10.0 for BMW iDrive 7. Touch, joystick and rotary ring controls.
 
+Local build: 65.8 MB package, about 190 MB after first launch.
+
 ## Install
 
 In mgu-store, add this source and install **Doodle Jump**:
