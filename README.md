@@ -17,3 +17,13 @@ Internet is required during installation. The build verifies and fetches the gam
 Run `./run-local.sh` with Python 3.13, Node.js and a C compiler. Open http://localhost:8079.
 
 Tested in the original MGU emulator. Physical head-unit installation and audio remain unverified.
+
+## Screenshots
+
+Menu
+
+![Menu](docs/screenshots/menu.png)
+
+Gameplay
+
+![Gameplay](docs/screenshots/gameplay.png)
