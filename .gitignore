@@ -1,0 +1,16 @@
+.DS_Store
+.venv/
+.cache/
+original/
+dist/
+preview/
+oap-sdk/
+**/bundle/
+**/data/
+**/__pycache__/
+*.pyc
+*.dylib
+*.o
+*.pack
+*.tgz
+*.mgu

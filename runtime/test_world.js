@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('assert');
+const {World}=require('../apps/kxrxh_doodle_jump/world');
+const images=[],clips=[];
+const cv={fillRect(){},image(...args){images.push(args);},alpha(a){assert(a>=0&&a<=1);},clip(...args){clips.push(args);},noclip(){},line(){}};
+const world=new World();
+world.draw(cv,1920,720,{paperWidth:1008,sprites:{}},0,false,0);
+assert.deepStrictEqual(images[0],[2,0,0,756,720]);
+assert.deepStrictEqual(images[1],[3,1164,0,756,720]);
+assert.deepStrictEqual(clips,[[0,0,756,720],[1164,0,756,720]]);
+assert.strictEqual(world.phase,0,'Paused scenery stays still');
+world.draw(cv,1920,720,{paperWidth:1008,sprites:{}},1,true,1/60);
+assert(world.lean>0 && world.lean<18);
+console.log('Notebook panorama geometry and pause: passed');

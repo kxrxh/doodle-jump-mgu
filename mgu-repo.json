@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "components": [
+    {
+      "id": "kxrxh_doodle_jump",
+      "kind": "app",
+      "path": "apps/kxrxh_doodle_jump",
+      "title": "Doodle Jump",
+      "description": "Doodle Jump for MGU7",
+      "author": "kxrxh",
+      "mguHmi": [
+        "ID7"
+      ],
+      "requires": {
+        "mgu-render": "0.6.12",
+        "mgu-inputgate": "1.0.0"
+      },
+      "build": {
+        "python": "tools/store_build.py",
+        "args": [
+          "{id}"
+        ],
+        "sdk": "oap-sdk",
+        "output": "dist/{id}@{version}.tgz",
+        "network": true
+      }
+    }
+  ],
+  "tools": [
+    {
+      "id": "mgu-inputgate",
+      "path": "native/inputgate",
+      "version": "1.0.0",
+      "title": "Controller gate",
+      "needs": [
+        "renderer"
+      ],
+      "optional": false,
+      "mguHmi": [
+        "ID7"
+      ],
+      "preload": {
+        "library": "mgu-inputgate.so",
+        "unit": "hmi.service",
+        "process": "HmiMain3D",
+        "strikes": 2,
+        "checkAfterSeconds": 120,
+        "healthySeconds": 60
+      }
+    }
+  ]
+}

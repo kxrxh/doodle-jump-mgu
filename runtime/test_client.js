@@ -1,0 +1,49 @@
+'use strict';
+const assert = require('assert');
+let PacketReader;
+try { ({ PacketReader } = require('../apps/kxrxh_doodle_jump/engine')); }
+catch (e) { assert.fail('The MGU original-engine packet reader is missing: ' + e.message); }
+const seen = [];
+const reader = new PacketReader((type, payload) => seen.push([type, Buffer.from(payload)]));
+const data = Buffer.from([1, 2, 3, 255]);
+const packet = Buffer.alloc(12);
+packet.write('FRM1', 0); packet.writeUInt32LE(data.length, 4); data.copy(packet, 8);
+for (let i = 0; i < packet.length; i++) reader.feed(packet.slice(i, i + 1));
+assert.strictEqual(seen.length, 1);
+assert.strictEqual(seen[0][0], 'FRM1');
+assert.deepStrictEqual(seen[0][1], data);
+const invalid = Buffer.alloc(8);
+invalid.write('FRM1'); invalid.writeUInt32LE(0xffffffff, 4);
+assert.throws(() => new PacketReader(() => {}).feed(invalid), /size/i);
+invalid.write('BAD1'); invalid.writeUInt32LE(0, 4);
+assert.throws(() => new PacketReader(() => {}).feed(invalid), /type/i);
+console.log('Original engine packet boundaries: passed');
+const fs=require('fs'),path=require('path'),os=require('os'),zlib=require('zlib');
+const {unpack}=require('../apps/kxrxh_doodle_jump/engine');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-pack-'));
+function pack(files) {
+    const parts=[], index={files:{}};
+    let offset=0;
+    Object.keys(files).forEach(name=>{const data=zlib.deflateRawSync(Buffer.from(files[name]));index.files[name]=[offset,data.length];offset+=data.length;parts.push(data);});
+    const meta=zlib.deflateRawSync(Buffer.from(JSON.stringify(index)));
+    const header=Buffer.alloc(12);header.write('MGUPACK1');header.writeUInt32LE(meta.length,8);
+    const file=path.join(dir,'engine.pack');fs.writeFileSync(file,Buffer.concat([header,meta].concat(parts)));return file;
+}
+try {
+    const out=path.join(dir,'output');
+    unpack(pack({'python/bin/python3.13':'executable','a/b/data':'original'}),out);
+    assert.strictEqual(fs.readFileSync(path.join(out,'a/b/data'),'utf8'),'original');
+    assert(fs.statSync(path.join(out,'python/bin/python3.13')).mode&0o100);
+    assert.throws(()=>unpack(pack({'../outside':'bad'}),out),/Unsafe/);
+    assert(!fs.existsSync(path.join(dir,'outside')));
+} finally { fs.rmSync(dir,{recursive:true,force:true}); }
+console.log('Engine pack extraction and traversal rejection: passed');
+const {Engine}=require('../apps/kxrxh_doodle_jump/engine');
+const engine=new Engine('',{info(){},error(){}}),textures=[];
+engine.onTexture=(id,w,h,pixels)=>textures.push([id,w,h,Array.from(pixels)]);
+const tex=Buffer.alloc(16);tex.writeUInt32LE(2,0);tex.writeUInt32LE(1,4);tex.writeUInt32LE(1,8);tex.set([1,2,3,255],12);
+engine.packet('TEX1',tex);
+assert.deepStrictEqual(textures,[[2,1,1,[1,2,3,255]]]);
+tex.writeUInt32LE(1,0);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
+tex.writeUInt32LE(2,0);tex.writeUInt32LE(4096,4);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
+console.log('Scenery texture boundaries: passed');

@@ -1,0 +1,39 @@
+Doodle Jump MGU7 host
+
+Original Doodle Jump 3.10.0 (Android versionCode 3910006), game engine and assets:
+Copyright Lima Sky LLC and the original contributors. All original rights reserved.
+These proprietary files are not covered by the host's MIT license. No source release
+of the original engine is claimed. The ARM engine runs unchanged under Unicorn.
+
+Original APK: https://cdn.didagame.com/20221115/doodle_jump_3.10.0_3910006.apk
+APK SHA-256: fb0e3c717f833a01085c251bd84b729c7e568a5319edbfa3c4a957d022361ddf
+Engine SHA-256: 4f92175d8ca5fcab546c0170803f80f7e7b37873b7c51241ef5a12c703fd8158
+
+The Android message adapter follows the MIT-licensed doodlejump-vita port:
+https://github.com/RONIN0095/doodlejump-vita
+Revision: 96ce1f488f1aa289d87a07627df70c51fe94dae5
+See LICENSE for its required copyright and permission notice.
+
+The runtime includes CPython (Python Software Foundation License), Unicorn
+(GPL-2.0 and its included dependency notices), pyelftools (public domain),
+Pillow (MIT-CMU and included third-party notices), miniaudio (MIT), cffi and
+pycparser (MIT). Their original license files remain inside the Python distribution
+and each installed package. The MGU toolkit retains its existing license notices.
+
+Shop, toy purchases, restore-purchase entry points, ad-removal buttons and promotions are
+omitted from drawing and input. This does not grant paid entitlements. Advertising,
+payment, account and online platform SDKs are not loaded by this offline host.
+News is omitted from rendering and input as well. The package excludes unused
+store and game-over promotional assets; original gameplay textures retain their bytes.
+
+Peripheral scenery uses crops of the original gametiles_L.png and live bck_ paper;
+crop coordinates and paper projection are recorded in scenery.py. The added app
+icon and cursor are separate new assets. Shipping PNG files retain their creation prompts in metadata.
+
+MGU toolkit: https://github.com/cauliflowermossgrape/idrive7-apps
+Revision: cca7f9ad17f96b92e60a89ea98686afe1b662041
+See kit/LICENSE and kit/LICENSE.mgu-renderd. The controller gate and its
+source retain their upstream notices in native/inputgate/.
+
+Original APK and game assets are downloaded and verified during installation;
+they are not included in this repository or its runtime release.

@@ -1,0 +1,74 @@
+{
+  "id": "kxrxh_doodle_jump",
+  "title": "Doodle Jump",
+  "description": "Doodle Jump for MGU7",
+  "version": "0.1.0",
+  "vendor": "kxrxh",
+  "loggingId": "OADJ",
+  "maxDiskUsage": 536870912,
+  "iconGlyph": "DJ",
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "Doodle Jump",
+      "settings": true,
+      "items": [
+        [
+          "button",
+          "BTN_PLAY",
+          "Play / Continue"
+        ],
+        [
+          "text",
+          "MENU_INFO",
+          ""
+        ]
+      ]
+    },
+    {
+      "name": "GAME",
+      "kind": "canvas",
+      "title": "Doodle Jump",
+      "chrome": false,
+      "nativePixels": true,
+      "buttons": [
+        [
+          "BTN_LEFT",
+          "Left"
+        ],
+        [
+          "BTN_SELECT",
+          "Select / Shoot"
+        ],
+        [
+          "BTN_RIGHT",
+          "Right"
+        ],
+        [
+          "BTN_BACK",
+          "Game menu"
+        ]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "parkedOnly",
+      "label": "Parked only (pauses while driving)",
+      "type": "bool",
+      "default": true
+    }
+  ],
+  "mguHmi": [
+    "ID7"
+  ]
+}
