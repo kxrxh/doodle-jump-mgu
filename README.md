@@ -1,4 +1,4 @@
-# Doodle Jump for MGU7
+# Doodle Jump for MGU7 WIP
 
 Original Doodle Jump 3.10.0 for BMW iDrive 7. Touch, joystick and rotary ring controls.
 
