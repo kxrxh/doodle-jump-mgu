@@ -46,6 +46,14 @@ def safe_path(name):
     return path
 
 
+def include_game_file(name):
+    if not (name.startswith('assets/') or name==LIBRARY):return False
+    safe_path(name)
+    # Host text rendering reads the X font atlas directly; the engine uses L images.
+    return not name.startswith(('assets/store/','assets/popups/game-over-')) and (
+        not name.endswith('_X.png') or name=='assets/fonts/doodlejumpfont_X.png')
+
+
 def assemble(runtime,apk,destination):
     destination.parent.mkdir(parents=True,exist_ok=True)
     temporary=destination.with_suffix('.tmp')
@@ -74,9 +82,7 @@ def assemble(runtime,apk,destination):
             with zipfile.ZipFile(apk) as archive:
                 for info in sorted(archive.infolist(),key=lambda item:item.filename):
                     name=info.filename
-                    if info.is_dir() or not (name.startswith('assets/') or name==LIBRARY):continue
-                    safe_path(name)
-                    if name.startswith(('assets/store/','assets/popups/game-over-')):continue
+                    if info.is_dir() or not include_game_file(name):continue
                     with archive.open(info) as data:append('original/extracted/'+name,data)
             import io
             append('original/inventory.json',io.BytesIO(json.dumps({'url':APK_URL,'sha256':APK_SHA256}).encode()))

@@ -12,6 +12,10 @@ from commerce import excluded
 
 
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+# The night overlay interpolates the primary color and one texture, using primary alpha.
+OVERLAY_ENV = {0x2200: 0x8570, 0x8571: 0x8575, 0x8580: 0x8578, 0x8581: 0x1702,
+               0x8582: 0x8578, 0x8590: 0x300, 0x8591: 0x300, 0x8592: 0x302,
+               0x8572: 0x1E01, 0x8588: 0x1702, 0x8598: 0x302}
 
 
 def multiply(a, b):
@@ -35,6 +39,10 @@ class GLES:
         self.pointers = {}
         self.textures = {}
         self.texture = 0
+        self.texture_unit = self.client_unit = 0x84C0
+        self.texture_units = {}
+        self.texture_environment = {}
+        self.client_units = {}
         self.next_texture = 1
         self.buffers = {}
         self.bound_buffers = {}
@@ -69,7 +77,7 @@ class GLES:
             'glDeleteTextures': self.delete_textures,
             'glTexParameteri': self.texture_parameter,
             'glTexImage2D': self.texture_image,
-            'glTexEnvi': lambda: setattr(self, 'replace', a(2) == 7681) if a(1) == 8704 else None,
+            'glTexEnvi': self.texture_env,
             'glTexEnvfv': lambda: None,
             'glEnable': lambda: self.enabled.add(a(0)),
             'glDisable': lambda: self.enabled.discard(a(0)),
@@ -101,8 +109,8 @@ class GLES:
             'glBufferData': self.buffer_data,
             'glBufferSubData': self.buffer_subdata,
             'glDeleteBuffers': self.delete_buffers,
-            'glActiveTexture': lambda: None,
-            'glClientActiveTexture': lambda: None,
+            'glActiveTexture': self.active_texture,
+            'glClientActiveTexture': self.client_active_texture,
             'glDepthMask': lambda: None,
             'eglGetCurrentDisplay': lambda: 1,
             'eglGetCurrentSurface': lambda: 1,
@@ -133,8 +141,36 @@ class GLES:
 
     def blend_func(self):
         self.source, self.destination = self.m.arg(0), self.m.arg(1)
-        if self.source not in (0, 1, 770, 771) or self.destination not in (0, 1, 770, 771):
+        if self.source not in (0, 1, 770, 771) or self.destination not in (0, 1, 768, 770, 771):
             raise NotImplementedError(f'GLES blend {self.source}, {self.destination}')
+
+    def active_texture(self):
+        self.texture_units[self.texture_unit] = (self.texture, 0xDE1 in self.enabled, self.replace, self.texture_environment)
+        self.texture_unit = self.m.arg(0)
+        self.texture, enabled, self.replace, self.texture_environment = self.texture_units.get(self.texture_unit, (0, False, False, {}))
+        self.enabled.discard(0xDE1)
+        if enabled:
+            self.enabled.add(0xDE1)
+
+    def texture_env(self):
+        self.texture_environment[self.m.arg(1)] = self.m.arg(2)
+        mode = self.texture_environment.get(0x2200, 0x2100)
+        if mode == 0x8570:
+            # shortcut: other combiners retain modulation; extend when their effects are implemented.
+            self.replace = 2 if all(self.texture_environment.get(k) == v for k, v in OVERLAY_ENV.items()) else 0
+        else:
+            self.replace = mode == 0x1E01
+
+    def client_active_texture(self):
+        self.client_units[self.client_unit] = (0x8078 in self.arrays, self.pointers.get(0x8078))
+        self.client_unit = self.m.arg(0)
+        enabled, pointer = self.client_units.get(self.client_unit, (False, None))
+        self.arrays.discard(0x8078)
+        self.pointers.pop(0x8078, None)
+        if enabled:
+            self.arrays.add(0x8078)
+        if pointer is not None:
+            self.pointers[0x8078] = pointer
 
     def translate(self):
         matrix = IDENTITY.copy()

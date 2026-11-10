@@ -71,7 +71,6 @@ function unpack(file, directory) {
         mkdir(path.dirname(destination));
         fs.writeFileSync(destination, zlib.inflateRawSync(source.slice(base + part[0], base + part[0] + part[1])));
     });
-    fs.chmodSync(path.join(directory, 'python', 'bin', 'python3.13'), 0o755);
     fs.writeFileSync(marker, digest);
 }
 
@@ -87,10 +86,13 @@ class Engine {
             directory = path.join(this.dataDir, 'engine');
             unpack(path.join(__dirname, 'engine.pack'), directory);
         }
-        const python = process.env.DOODLE_PYTHON || path.join(directory, 'python', 'bin', 'python3.13');
+        const python = process.env.DOODLE_PYTHON || '/var/opt/mgu-python/current/bin/python3';
         const args = [path.join(directory, 'engine_process.py'), '--data', process.env.DOODLE_DATA || path.join(this.dataDir, 'game')];
         if (!process.env.DOODLE_ENGINE) args.push('--original', path.join(directory, 'original'));
-        const child = this.child = spawn(python, args, { cwd: directory, stdio: ['pipe', 'pipe', 'pipe'] });
+        const env = Object.assign({}, process.env, {
+            PYTHONPATH: path.join(directory, 'site-packages'), PYTHONNOUSERSITE: '1', PYTHONDONTWRITEBYTECODE: '1',
+        });
+        const child = this.child = spawn(python, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'] });
         const reader = new PacketReader((type, body) => this.packet(type,body));
         child.stdout.on('data', (chunk) => { try { reader.feed(chunk); } catch (e) { this.fail(e); } });
         let pending = '';

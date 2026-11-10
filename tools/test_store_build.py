@@ -31,18 +31,40 @@ class StoreBuildTests(unittest.TestCase):
         build=self.module()
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk';out=root/'engine.pack'
-            runtime.write_bytes(pack({'engine_process.py':b'host','python/bin/python3.13':b'python'}))
+            runtime.write_bytes(pack({'engine_process.py':b'host','site-packages/elftools/__init__.py':b'ELF parser'}))
+            kept={'assets/paper_L.png':b'paper','assets/fonts/doodlejumpfont_X.png':b'font',
+                  'assets/Atlases/tutorial_X.atlas':b'atlas','assets/ninja/game_L.png':b'ninja',
+                  'assets/jump.ogg':b'sound','lib/armeabi-v7a/libDoodleJump.so':b'engine'}
             with zipfile.ZipFile(apk,'w') as archive:
-                for name,value in {'assets/paper.png':b'paper','assets/store/banner.png':b'shop',
-                        'assets/popups/game-over-plush_L.png':b'ad','lib/armeabi-v7a/libDoodleJump.so':b'engine',
+                for name,value in {**kept,'assets/paper_X.png':b'high resolution',
+                        'assets/ninja/game_X.png':b'high resolution ninja','assets/store/banner.png':b'shop',
+                        'assets/popups/game-over-plush_L.png':b'ad',
                         'classes.dex':b'android'}.items():archive.writestr(name,value)
             build.assemble(runtime,apk,out)
             data=out.read_bytes();n=struct.unpack_from('<I',data,8)[0];base=12+n
             files=json.loads(zlib.decompress(data[12:base],-15))['files']
-            self.assertEqual(set(files),{'engine_process.py','python/bin/python3.13',
-                'original/extracted/assets/paper.png','original/extracted/lib/armeabi-v7a/libDoodleJump.so','original/inventory.json'})
-            off,size=files['original/extracted/assets/paper.png']
-            self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),b'paper')
+            self.assertEqual(set(files),{'engine_process.py','site-packages/elftools/__init__.py','original/inventory.json'}|
+                             {'original/extracted/'+name for name in kept})
+            for name,value in kept.items():
+                off,size=files['original/extracted/'+name]
+                self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),value)
+
+    def test_local_extraction_omits_extra_x_images_without_dropping_themes_or_sound(self):
+        original=importlib.import_module('get_original')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);apk=root/'.cache/original.apk';apk.parent.mkdir()
+            kept={'assets/paper_L.png':b'paper','assets/fonts/doodlejumpfont_X.png':b'font',
+                  'assets/Atlases/tutorial_X.atlas':b'atlas','assets/ninja/game_L.png':b'ninja',
+                  'assets/jump.ogg':b'sound','lib/armeabi-v7a/libDoodleJump.so':b'engine'}
+            with zipfile.ZipFile(apk,'w') as archive:
+                for name,value in {**kept,'assets/paper_X.png':b'high resolution',
+                        'assets/ninja/game_X.png':b'high resolution ninja','assets/store/banner.png':b'shop',
+                        'assets/popups/game-over-plush_L.png':b'ad','classes.dex':b'android'}.items():archive.writestr(name,value)
+            with patch.object(original,'ROOT',root),patch.object(original,'APK_SHA256',hashlib.sha256(apk.read_bytes()).hexdigest()):
+                original.main()
+            extracted=root/'original/extracted'
+            self.assertEqual({file.relative_to(extracted).as_posix():file.read_bytes()
+                              for file in extracted.rglob('*') if file.is_file()},kept)
 
     def test_zip_paths_cannot_escape_the_game_directory(self):
         build=self.module()

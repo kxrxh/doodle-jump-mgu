@@ -14,17 +14,21 @@ https://github.com/RONIN0095/doodlejump-vita
 Revision: 96ce1f488f1aa289d87a07627df70c51fe94dae5
 See LICENSE for its required copyright and permission notice.
 
-The runtime includes CPython (Python Software Foundation License), Unicorn
+The host uses mgu-store's CPython 3.12 (Python Software Foundation License).
+Its private runtime includes Unicorn
 (GPL-2.0 and its included dependency notices), pyelftools (public domain),
 Pillow (MIT-CMU and included third-party notices), miniaudio (MIT), cffi and
-pycparser (MIT). Their original license files remain inside the Python distribution
-and each installed package. The MGU toolkit retains its existing license notices.
+pycparser (MIT). Their original license files remain inside each installed package;
+mgu-python provides CPython's license files. The MGU toolkit retains its existing
+license notices. Unicorn runs on Linux x86-64 with only its ARM guest backend built.
 
 Shop, toy purchases, restore-purchase entry points, ad-removal buttons and promotions are
 omitted from drawing and input. This does not grant paid entitlements. Advertising,
 payment, account and online platform SDKs are not loaded by this offline host.
 News is omitted from rendering and input as well. The package excludes unused
-store and game-over promotional assets; original gameplay textures retain their bytes.
+store and game-over promotional assets and unused _X PNG variants, retaining the
+host's _X font atlas and the original _L images for every theme. Included gameplay
+textures retain their original bytes, and all game sounds are retained.
 
 Peripheral scenery uses crops of the original gametiles_L.png and live bck_ paper;
 crop coordinates and paper projection are recorded in scenery.py. The added app
@@ -35,5 +39,6 @@ Revision: cca7f9ad17f96b92e60a89ea98686afe1b662041
 See kit/LICENSE and kit/LICENSE.mgu-renderd. The controller gate and its
 source retain their upstream notices in native/inputgate/.
 
-Original APK and game assets are downloaded and verified during installation;
-they are not included in this repository or its runtime release.
+Source builds download and verify the original APK and game assets. Ready app
+packages include those verified files; the source repository and runtime-only
+release do not include them.

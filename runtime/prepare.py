@@ -1,52 +1,75 @@
-"""Build the portable x86-64 Linux runtime without original game files."""
-import hashlib
+"""Build private Python 3.12 dependencies and the Linux x86-64 ARM-only runtime."""
 import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
-import urllib.request
-
 
 ROOT=Path(__file__).resolve().parent
 BUNDLE=ROOT/'bundle'
-URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.13.18+20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz'
-SHA256='df15fe60d3ff55bf9dcf25824b5572756bb8816ff93865a273d3301d7066a8b7'
-IMAGE='python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72'
+IMAGE='ubuntu:18.04@sha256:152dc042452c496007f07ca9127571cb9c29697f42acbfad72324b2bb2e43c98'
+UNICORN_URL='https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.2.1/unicorn-2.1.4.tar.gz'
+UNICORN_SHA256='00567a70e323f749b419cd86bee4f9115beab7ebba32194581c090cbb7c59cff'
 
 
 def main():
-    BUNDLE.mkdir(exist_ok=True)
-    archive=ROOT/'data/python-linux.tar.gz'
-    if not (BUNDLE/'python/bin/python3.13').exists():
-        archive.parent.mkdir(exist_ok=True)
-        if not archive.exists():
-            urllib.request.urlretrieve(URL,archive)
-        if hashlib.sha256(archive.read_bytes()).hexdigest()!=SHA256:
-            raise ValueError('Python distribution digest mismatch')
-        with tarfile.open(archive) as source:
-            source.extractall(BUNDLE,filter='data')
+    sys.path.insert(0,str(ROOT.parent/'tools'))
+    from store_build import download
+    archive=download(UNICORN_URL,UNICORN_SHA256,ROOT/'data/unicorn-2.1.4.tar.gz')
+    source=ROOT/'data/unicorn-source'
+    shutil.rmtree(source,ignore_errors=True)
+    shutil.rmtree(ROOT/'data/unicorn-build',ignore_errors=True)
+    source.mkdir(parents=True)
+    with tarfile.open(archive) as package:package.extractall(source,filter='data')
+    shutil.rmtree(BUNDLE,ignore_errors=True)
+    BUNDLE.mkdir()
+    subprocess.run([sys.executable,'-m','pip','install','--no-compile','--only-binary=:all:',
+        '--platform','manylinux_2_27_x86_64','--platform','manylinux_2_24_x86_64',
+        '--platform','manylinux2014_x86_64','--implementation','cp','--python-version','3.12',
+        '--abi','cp312','--target',str(BUNDLE/'site-packages'),'-r',str(ROOT/'requirements.txt')],check=True)
     command=['docker','run','--rm','--platform','linux/amd64','-v',f'{ROOT}:/work','-w','/work',IMAGE]
-    subprocess.run(command+['/work/bundle/python/bin/python3.13','-m','pip','install','--no-cache-dir','-r','requirements.txt'],check=True)
-    # Preserve the upstream BOLT interpreter: another strip pass breaks its load segments.
-    if not (BUNDLE/'raster.so').exists() or (ROOT/'raster.c').stat().st_mtime>(BUNDLE/'raster.so').stat().st_mtime:
-        subprocess.run(command+['sh','-c','apt-get update -qq && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/tmp/build.log && cc -shared -fPIC -O3 raster.c -o bundle/raster.so -lm'],check=True)
+    # Build against the MGU's glibc 2.27; newer Linux toolchains can require glibc 2.34.
+    subprocess.run(command+['bash','-ec',r'''
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq --no-install-recommends gcc make libc6-dev cmake pkg-config >/tmp/build.log
+mkdir -p data/unicorn-build
+cd data/unicorn-build
+cmake ../unicorn-source/unicorn-2.1.4/src -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+    -DUNICORN_ARCH=arm -DUNICORN_BUILD_TESTS=OFF -DUNICORN_INSTALL=OFF \
+    -DUNICORN_LEGACY_STATIC_ARCHIVE=OFF >/tmp/cmake.log
+test -f config-host.h
+cmake --build . -- -j2 >/tmp/unicorn.log
+strip --strip-unneeded libunicorn.so.2
+cp libunicorn.so.2 /work/bundle/site-packages/unicorn/lib/libunicorn.so.2
+cc -x c - -I../unicorn-source/unicorn-2.1.4/src/include -L. \
+    -Wl,-rpath,/work/data/unicorn-build -l:libunicorn.so.2 -o check-arm <<'C'
+#include <assert.h>
+#include <unicorn/unicorn.h>
+int main(void) {
+    assert(uc_arch_supported(UC_ARCH_ARM));
+    for (int arch=UC_ARCH_ARM+1; arch<UC_ARCH_MAX; arch++) assert(!uc_arch_supported(arch));
+    return 0;
+}
+C
+./check-arm
+cd /work
+cc -shared -fPIC -O3 raster.c -o bundle/raster.so -lm
+'''],check=True)
+    library=(BUNDLE/'site-packages/unicorn/lib/libunicorn.so.2').read_bytes()
+    assert library[:5]==b'\x7fELF\x02' and library[18:20]==b'\x3e\x00','Expected a Linux x86-64 library'
     for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery'):
         shutil.copy2(ROOT/f'{name}.py',BUNDLE)
     subprocess.run(['clang','-target','armv7-none-eabi','-c',str(ROOT/'arm_helpers.S'),'-o',str(ROOT/'arm_helpers.o')],check=True)
-    for name in ('arm_helpers.S','arm_helpers.o'):
+    for name in ('arm_helpers.S','arm_helpers.o','raster.c','LICENSE','NOTICE'):
         shutil.copy2(ROOT/name,BUNDLE)
     (BUNDLE/'arm_helpers.o').touch()
-    shutil.copy2(ROOT/'raster.c',BUNDLE)
-    # The device uses the prebuilt rasterizer; it does not need a compiler.
     (BUNDLE/'raster.so').touch()
-    shutil.copy2(ROOT/'LICENSE',BUNDLE)
-    shutil.copy2(ROOT/'NOTICE',BUNDLE)
-    (BUNDLE/'assets').mkdir(exist_ok=True)
+    (BUNDLE/'assets').mkdir()
     shutil.copy2(ROOT/'assets/cursor.png',BUNDLE/'assets/cursor.png')
     shutil.copy2(ROOT/'bundle.packignore',BUNDLE/'.packignore')
-    kit=ROOT.parent/'kit/tools/pack_data.py'
-    spec=importlib.util.spec_from_file_location('pack_data',kit)
+    spec=importlib.util.spec_from_file_location('pack_data',ROOT.parent/'kit/tools/pack_data.py')
     pack_data=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pack_data)
     pack_data.SPLIT=1<<60
@@ -56,5 +79,4 @@ def main():
     print(f'{output.name}: {count} files, {raw/1e6:.1f} MB extracted, {size/1e6:.1f} MB packed')
 
 
-if __name__=='__main__':
-    main()
+if __name__=='__main__':main()

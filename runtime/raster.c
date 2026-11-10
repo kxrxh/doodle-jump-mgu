@@ -89,13 +89,17 @@ void raster(uint8_t *out, int width, int height, const Vertex *vertices, int cou
                     rgba[k] = (texture[p00+k] * (1-fx) + texture[p10+k] * fx) * (1-fy) +
                               (texture[p01+k] * (1-fx) + texture[p11+k] * fx) * fy;
             }
-            for (int k = 0; k < 4; k++) if (!replace || !texture) rgba[k] *= color[k];
+            if (replace == 2 && texture) {
+                for (int k = 0; k < 3; k++) rgba[k] = color[k] * 255 * color[3] + rgba[k] * (1 - color[3]);
+            } else {
+                for (int k = 0; k < 4; k++) if (!replace || !texture) rgba[k] *= color[k];
+            }
             float alpha = rgba[3] / 255;
             float sf = blend ? factor(source, alpha) : 1;
             float df = blend ? factor(destination, alpha) : 0;
             uint8_t *pixel = out + (y * width + x) * 4;
             for (int k = 0; k < 4; k++) {
-                float value = rgba[k] * sf + pixel[k] * df;
+                float value = rgba[k] * sf + pixel[k] * (blend && destination == 768 ? rgba[k] / 255 : df);
                 pixel[k] = (uint8_t)fminf(255, fmaxf(0, value + 0.5f));
             }
         }

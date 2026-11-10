@@ -31,12 +31,12 @@ function pack(files) {
 }
 try {
     const out=path.join(dir,'output');
-    unpack(pack({'python/bin/python3.13':'executable','a/b/data':'original'}),out);
+    unpack(pack({'site-packages/dependency.py':'dependency','a/b/data':'original'}),out);
     assert.strictEqual(fs.readFileSync(path.join(out,'a/b/data'),'utf8'),'original');
-    assert(fs.statSync(path.join(out,'python/bin/python3.13')).mode&0o100);
+    assert(!fs.existsSync(path.join(out,'python')),'the runtime uses Store Python');
     fs.writeFileSync(path.join(dir,'scores'),'saved score');
     fs.writeFileSync(path.join(out,'a/b/obsolete'),'old runtime');
-    unpack(pack({'python/bin/python3.13':'updated','a/data':'new runtime'}),out);
+    unpack(pack({'site-packages/dependency.py':'updated','a/data':'new runtime'}),out);
     assert(!fs.existsSync(path.join(out,'a/b/obsolete')),'updating removes obsolete runtime files');
     assert.strictEqual(fs.readFileSync(path.join(dir,'scores'),'utf8'),'saved score','game saves outside the runtime survive');
     assert.throws(()=>unpack(pack({'../outside':'bad'}),out),/Unsafe/);
@@ -53,3 +53,36 @@ assert.deepStrictEqual(textures,[[2,1,1,[1,2,3,255]]]);
 tex.writeUInt32LE(1,0);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 tex.writeUInt32LE(2,0);tex.writeUInt32LE(4096,4);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 console.log('Scenery texture boundaries: passed');
+
+const childProcess=require('child_process'),EventEmitter=require('events');
+const savedSpawn=childProcess.spawn;
+const savedEnv={engine:process.env.DOODLE_ENGINE,python:process.env.DOODLE_PYTHON,path:process.env.PYTHONPATH};
+const local=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-launch-'));
+let launched;
+try {
+    childProcess.spawn=(command,args,options)=>{
+        launched={command,args,options};
+        const child=new EventEmitter();
+        child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();child.kill=()=>{};
+        return child;
+    };
+    delete require.cache[require.resolve('../apps/kxrxh_doodle_jump/engine')];
+    const LaunchEngine=require('../apps/kxrxh_doodle_jump/engine').Engine;
+    process.env.DOODLE_ENGINE=local;delete process.env.DOODLE_PYTHON;process.env.PYTHONPATH='/unrelated/modules';
+    new LaunchEngine('/game-data',{info(){},error(){}}).start();
+    assert.strictEqual(launched.command,'/var/opt/mgu-python/current/bin/python3','uses the Store interpreter');
+    assert.strictEqual(launched.options.env.PYTHONPATH,path.join(local,'site-packages'),'private dependencies reach Store Python');
+    assert.strictEqual(launched.options.env.PYTHONNOUSERSITE,'1');
+    assert.strictEqual(process.env.PYTHONPATH,'/unrelated/modules','launch does not change the parent environment');
+    assert.deepStrictEqual(launched.args,[path.join(local,'engine_process.py'),'--data','/game-data/game']);
+    process.env.DOODLE_PYTHON='/local/python';
+    new LaunchEngine('/game-data',{info(){},error(){}}).start();
+    assert.strictEqual(launched.command,'/local/python','local emulator interpreter override still works');
+} finally {
+    childProcess.spawn=savedSpawn;
+    for(const pair of [['DOODLE_ENGINE',savedEnv.engine],['DOODLE_PYTHON',savedEnv.python],['PYTHONPATH',savedEnv.path]]) {
+        if(pair[1]===undefined)delete process.env[pair[0]];else process.env[pair[0]]=pair[1];
+    }
+    fs.rmSync(local,{recursive:true,force:true});
+}
+console.log('Store Python and private runtime dependency launch: passed');

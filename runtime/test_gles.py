@@ -8,6 +8,82 @@ from test_arm import LIBRARY
 
 
 class GraphicsTests(unittest.TestCase):
+    def test_overlay_interpolates_texture_with_primary_color_and_keeps_texture_alpha(self):
+        m = Arm(LIBRARY)
+        LibC(m)
+        renderer = importlib.import_module('gles').GLES(m, 4, 4)
+        def gl(name, *args):
+            m.call(m.import_address(name), *[struct.unpack('<I', struct.pack('<f', x))[0] if isinstance(x, float) else x for x in args])
+        gl('glMatrixMode', 0x1701)
+        gl('glOrthof', 0.0, 4.0, 4.0, 0.0, -1.0, 1.0)
+        vertices, pixel = m.malloc(24), m.malloc(4)
+        m.uc.mem_write(vertices, struct.pack('<6f', 0, 0, 4, 0, 0, 4))
+        m.uc.mem_write(pixel, bytes((100, 150, 200, 128)))
+        gl('glVertexPointer', 2, 0x1406, 0, vertices)
+        gl('glEnableClientState', 0x8074)
+        gl('glBindTexture', 0xDE1, 1)
+        gl('glTexImage2D', 0xDE1, 0, 0x1908, 1, 1, 0, 0x1908, 0x1401, pixel)
+        gl('glEnable', 0xDE1)
+        gl('glColor4f', 0.2, 0.4, 0.6, 0.25)
+        for key, value in ((0x2200, 0x8570), (0x8571, 0x8575), (0x8580, 0x8578),
+                           (0x8581, 0x1702), (0x8582, 0x8578), (0x8590, 0x300),
+                           (0x8591, 0x300), (0x8592, 0x302), (0x8572, 0x1E01),
+                           (0x8588, 0x1702), (0x8598, 0x302)):
+            gl('glTexEnvi', 0x2300, key, value)
+        gl('glDrawArrays', 4, 0, 3)
+        self.assertEqual(renderer.image().getpixel((0, 0)), (88, 138, 188, 128))
+
+    def test_secondary_texture_state_does_not_disable_the_primary_texture(self):
+        m = Arm(LIBRARY)
+        LibC(m)
+        renderer = importlib.import_module('gles').GLES(m, 4, 4)
+        def gl(name, *args):
+            m.call(m.import_address(name), *[struct.unpack('<I', struct.pack('<f', x))[0] if isinstance(x, float) else x for x in args])
+        gl('glMatrixMode', 0x1701)
+        gl('glOrthof', 0.0, 4.0, 4.0, 0.0, -1.0, 1.0)
+        vertices, uv, pixel = m.malloc(32), m.malloc(32), m.malloc(4)
+        m.uc.mem_write(vertices, struct.pack('<8f', 0, 0, 4, 0, 0, 4, 4, 4))
+        m.uc.mem_write(uv, struct.pack('<8f', 0, 0, 1, 0, 0, 1, 1, 1))
+        m.uc.mem_write(pixel, bytes((255, 0, 0, 255)))
+        gl('glVertexPointer', 2, 0x1406, 0, vertices)
+        gl('glTexCoordPointer', 2, 0x1406, 0, uv)
+        gl('glEnableClientState', 0x8074)
+        gl('glEnableClientState', 0x8078)
+        gl('glBindTexture', 0xDE1, 1)
+        gl('glTexImage2D', 0xDE1, 0, 0x1908, 1, 1, 0, 0x1908, 0x1401, pixel)
+        gl('glEnable', 0xDE1)
+        gl('glColor4f', 0.5, 0.5, 0.5, 1.0)
+        gl('glActiveTexture', 0x84C1)
+        gl('glBindTexture', 0xDE1, 0)
+        gl('glTexEnvi', 0x2300, 0x2200, 0x1E01)
+        gl('glDisable', 0xDE1)
+        gl('glClientActiveTexture', 0x84C1)
+        gl('glDisableClientState', 0x8078)
+        gl('glActiveTexture', 0x84C0)
+        gl('glClientActiveTexture', 0x84C0)
+        gl('glDrawArrays', 5, 0, 4)
+        self.assertEqual(renderer.image().getpixel((1, 1)), (128, 0, 0, 255))
+
+    def test_source_color_blending_multiplies_each_destination_channel(self):
+        m = Arm(LIBRARY)
+        LibC(m)
+        renderer = importlib.import_module('gles').GLES(m, 4, 4)
+        def gl(name, *args):
+            m.call(m.import_address(name), *[struct.unpack('<I', struct.pack('<f', x))[0] if isinstance(x, float) else x for x in args])
+        gl('glClearColor', 0.8, 0.4, 0.2, 1.0)
+        gl('glClear', 0x4000)
+        gl('glMatrixMode', 0x1701)
+        gl('glOrthof', 0.0, 4.0, 4.0, 0.0, -1.0, 1.0)
+        gl('glColor4f', 0.25, 0.5, 0.75, 0.5)
+        vertices = m.malloc(24)
+        m.uc.mem_write(vertices, struct.pack('<6f', 0, 0, 4, 0, 0, 4))
+        gl('glVertexPointer', 2, 0x1406, 0, vertices)
+        gl('glEnableClientState', 0x8074)
+        gl('glEnable', 0xBE2)
+        gl('glBlendFunc', 0, 768)
+        gl('glDrawArrays', 4, 0, 3)
+        self.assertEqual(renderer.image().getpixel((0, 0)), (51, 51, 38, 128))
+
     def test_cached_background_preserves_blending_and_texture_changes(self):
         m=Arm(LIBRARY);LibC(m)
         renderer=importlib.import_module('gles').GLES(m,4,4)
