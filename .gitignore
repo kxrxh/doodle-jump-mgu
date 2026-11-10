@@ -10,6 +10,8 @@ oap-sdk/
 **/__pycache__/
 *.pyc
 *.dylib
+*.so
+native.*.sha256
 *.o
 *.pack
 *.tgz

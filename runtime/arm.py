@@ -1,8 +1,10 @@
 """Execute the unchanged ARM Android library with explicit host imports."""
+import ctypes
 import hashlib
 from pathlib import Path
 import struct
 import subprocess
+import weakref
 
 from elftools.elf.elffile import ELFFile
 from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE
@@ -11,6 +13,8 @@ from unicorn.arm_const import (
     UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_C1_C0_2,
     UC_ARM_REG_FPEXC, UC_ARM_REG_CPSR,
 )
+from unicorn.unicorn_py3.unicorn import uclib
+from native_backend import library as native_library
 
 
 BASE = 0x10000000
@@ -21,6 +25,20 @@ SMALL_HEAP = 0x40000000
 SMALL_LIMIT = SMALL_HEAP + 0x1000000
 REGS = (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3)
 ENGINE_SHA256 = '4f92175d8ca5fcab546c0170803f80f7e7b37873b7c51241ef5a12c703fd8158'
+
+
+class GuestApi(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_void_p) for name in
+                ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop')]
+    _fields_.append(('registers', ctypes.c_int * 7))
+
+
+class NativeResult(ctypes.Structure):
+    _fields_ = [('value', ctypes.c_uint64), ('flags', ctypes.c_uint32)]
+
+
+DispatchFallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint64,
+                                    ctypes.POINTER(NativeResult))
 
 
 class Arm:
@@ -42,7 +60,34 @@ class Arm:
         self.handlers = {}
         self.hooks = {STUB+0xFE000:'malloc',STUB+0xFE004:'free'}
         self.depth = 0
-        self.uc.hook_add(UC_HOOK_CODE, self._hook, begin=STUB, end=RETURN - 1)
+        self._dispatch_errors = []
+        self._native = native_library()
+        self._native.dispatch_create.argtypes = [ctypes.c_void_p, ctypes.POINTER(GuestApi), ctypes.c_int,
+            ctypes.c_uint64, ctypes.c_uint64, DispatchFallback, ctypes.c_void_p]
+        self._native.dispatch_create.restype = ctypes.c_void_p
+        self._native.dispatch_destroy.argtypes = [ctypes.c_void_p]
+        self._native.dispatch_destroy.restype = None
+        self._native.dispatch_add.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int]
+        self._native.dispatch_add.restype = ctypes.c_int
+        self._native.dispatch_register.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p]
+        self._native.dispatch_register.restype = ctypes.c_int
+        self._native.dispatch_error.argtypes = [ctypes.c_void_p]
+        self._native.dispatch_error.restype = ctypes.c_char_p
+        self._native.dispatch_clear_error.argtypes = [ctypes.c_void_p]
+        self._native.dispatch_clear_error.restype = None
+        api = GuestApi(*(ctypes.cast(getattr(uclib, 'uc_' + name), ctypes.c_void_p) for name in
+            ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop')),
+            (ctypes.c_int * 7)(*REGS, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC))
+        self._fallback = DispatchFallback(self._dispatch_fallback)
+        self.native = self._native.dispatch_create(self.uc._uch, ctypes.byref(api), UC_HOOK_CODE,
+                                                   STUB, RETURN - 1, self._fallback, None)
+        if not self.native:
+            raise RuntimeError('Cannot create native ARM host dispatcher')
+        # Register after Unicorn's own finalizer so hooks are removed before uc_close.
+        weakref.finalize(self.uc, self._native.dispatch_destroy, self.native)
+        self.uc._native_dispatch_keepalive = (self._native, self._fallback)
+        for address, name in self.hooks.items():
+            self._map_import(address, name)
         self._libc_memory()
         with library.open('rb') as source:
             elf = ELFFile(source)
@@ -89,6 +134,7 @@ class Arm:
             self.uc.mem_write(address, b'\x1e\xff\x2f\xe1')  # ARM bx lr
             self.imports[name] = address
             self.hooks[address] = name
+            self._map_import(address, name)
         return self.imports[name]
 
     def _native_helpers(self):
@@ -114,26 +160,38 @@ class Arm:
         self.handlers[name] = callback
         return self.import_address(name)
 
-    def _hook(self, uc, address, size, data):
-        name = self.hooks[address]
-        callback = self.handlers.get(name)
-        if callback is None:
-            raise NotImplementedError(f'Host import {name}, caller {uc.reg_read(UC_ARM_REG_LR):#x}')
-        result = callback()
-        if isinstance(result, tuple):
-            self.uc.reg_write(UC_ARM_REG_R0, result[0] & 0xFFFFFFFF)
-            self.uc.reg_write(UC_ARM_REG_R1, result[1] & 0xFFFFFFFF)
-        elif result is not None:
-            self.uc.reg_write(UC_ARM_REG_R0, result & 0xFFFFFFFF)
-            if result > 0xFFFFFFFF:
-                self.uc.reg_write(UC_ARM_REG_R1, result >> 32)
-        self.uc.reg_write(UC_ARM_REG_PC, self.uc.reg_read(UC_ARM_REG_LR))
+    def _map_import(self, address, name, intercept=False):
+        if self._native.dispatch_add(self.native, address, name.encode(), intercept):
+            raise RuntimeError(self._native.dispatch_error(self.native).decode())
+
+    def register_native(self, name, callback, context):
+        if self._native.dispatch_register(self.native, name.encode(), ctypes.cast(callback, ctypes.c_void_p), context):
+            raise RuntimeError(self._native.dispatch_error(self.native).decode())
+        return self.import_address(name)
+
+    def _dispatch_fallback(self, context, address, output):
+        try:
+            name = self.hooks[address]
+            callback = self.handlers.get(name)
+            if callback is None:
+                raise NotImplementedError(f'Host import {name}, caller {self.uc.reg_read(UC_ARM_REG_LR):#x}')
+            result = callback()
+            if isinstance(result, tuple):
+                output.contents.value = (result[0] & 0xFFFFFFFF) | ((result[1] & 0xFFFFFFFF) << 32)
+                output.contents.flags = 3
+            elif result is not None:
+                output.contents.value = result & 0xFFFFFFFFFFFFFFFF
+                output.contents.flags = 3 if result > 0xFFFFFFFF else 1
+            return 0
+        except BaseException as error:
+            self._dispatch_errors[-1] = error
+            return 1
 
     def intercept(self, offset, name, callback):
         address = BASE + offset
         self.handlers[name] = callback
         self.hooks[address] = name
-        self.uc.hook_add(UC_HOOK_CODE, self._hook, begin=address, end=address)
+        self._map_import(address, name, True)
 
     def arg(self, index):
         if index < 4:
@@ -218,6 +276,8 @@ class Arm:
         address = self.symbols[symbol] if isinstance(symbol, str) else symbol
         context = self.uc.context_save()
         self.depth += 1
+        self._dispatch_errors.append(None)
+        self._native.dispatch_clear_error(self.native)
         try:
             stack = STACK + 0x7FE000 - self.depth * 0x10000
             self.uc.reg_write(UC_ARM_REG_SP, stack)
@@ -228,6 +288,11 @@ class Arm:
                     self.put32(stack + (i - 4) * 4, value)
             self.uc.reg_write(UC_ARM_REG_LR, RETURN)
             self.uc.emu_start(address, RETURN, count=1_000_000_000)
+            if self._dispatch_errors[-1] is not None:
+                raise self._dispatch_errors[-1]
+            error = self._native.dispatch_error(self.native)
+            if error:
+                raise RuntimeError(error.decode())
             if self.uc.reg_read(UC_ARM_REG_PC) != RETURN:
                 raise RuntimeError(f'Engine call instruction limit at {self.uc.reg_read(UC_ARM_REG_PC):#x}')
             return self.uc.reg_read(UC_ARM_REG_R0)
@@ -235,6 +300,8 @@ class Arm:
             raise RuntimeError(f'ARM fault PC={self.uc.reg_read(UC_ARM_REG_PC):#x} '
                                f'LR={self.uc.reg_read(UC_ARM_REG_LR):#x}: {error}') from error
         finally:
+            self._native.dispatch_clear_error(self.native)
+            self._dispatch_errors.pop()
             self.depth -= 1
             self.uc.context_restore(context)
 

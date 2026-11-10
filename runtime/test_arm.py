@@ -15,6 +15,55 @@ class ArmTests(unittest.TestCase):
             self.fail('The original ARM engine execution host is missing')
         return module.Arm(LIBRARY)
 
+    def test_native_dispatch_handles_mutex_import_without_python_callback(self):
+        machine = self.machine()
+        def unexpected_callback():
+            raise AssertionError('The native mutex import crossed into Python')
+        machine.handlers['pthread_mutex_lock'] = unexpected_callback
+        # Exercise the host dispatcher rather than the ARM assembly fast path.
+        machine.native_imports.pop('pthread_mutex_lock')
+        machine.imports.pop('pthread_mutex_lock', None)
+        self.assertEqual(machine.call(machine.import_address('pthread_mutex_lock'), 123), 0)
+
+    def test_host_results_preserve_arm_words_and_nested_call_context(self):
+        machine = self.machine()
+        pair = machine.register('host_pair', lambda: (0x89ABCDEF, 0x12345678))
+        whole = machine.register('host_whole', lambda: 0x1234567889ABCDEF)
+        shim = machine.malloc(16)
+        # PUSH {lr}; BLX r3; MOV r0,r1; POP {pc} exposes the returned high word.
+        machine.uc.mem_write(shim, struct.pack('<4I', 0xE52DE004, 0xE12FFF33, 0xE1A00001, 0xE49DF004))
+        for target in (pair, whole):
+            def outer(target=target):
+                low = machine.call(target)
+                return low ^ machine.arg(4)
+            address = machine.register('host_outer', outer)
+            self.assertEqual(machine.call(address, 1, 2, 3, 4, 0x76543210), 0xFFFFFFFF)
+            self.assertEqual(machine.call(shim, 0, 0, 0, target), 0x12345678)
+
+    def test_host_callback_errors_escape_emulation_and_next_call_still_works(self):
+        machine = self.machine()
+        def broken():
+            raise ValueError('guest callback failed')
+        address = machine.register('host_broken', broken)
+        with self.assertRaisesRegex(ValueError, 'guest callback failed'):
+            machine.call(address)
+        with self.assertRaisesRegex(NotImplementedError, 'Host import missing_host'):
+            machine.call(machine.import_address('missing_host'))
+        self.assertEqual(machine.call(machine.register('host_ok', lambda: 123)), 123)
+
+    def test_nested_host_error_can_be_caught_by_the_outer_handler(self):
+        machine = self.machine()
+        def broken():
+            raise ValueError('nested callback failed')
+        broken_address = machine.register('host_broken', broken)
+        def recover():
+            try:
+                machine.call(broken_address)
+            except ValueError:
+                return 456
+            raise AssertionError('The nested callback should fail')
+        self.assertEqual(machine.call(machine.register('host_recover', recover)), 456)
+
     def test_original_engine_integer_and_double_calling_conventions(self):
         machine = self.machine()
         self.assertEqual(machine.call('__aeabi_idiv', -7, 2), 0xFFFFFFFD)

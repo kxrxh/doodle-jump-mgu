@@ -21,6 +21,9 @@ Pillow (MIT-CMU and included third-party notices), miniaudio (MIT), cffi and
 pycparser (MIT). Their original license files remain inside each installed package;
 mgu-python provides CPython's license files. The MGU toolkit retains its existing
 license notices. Unicorn runs on Linux x86-64 with only its ARM guest backend built.
+The C++ backend statically links GCC libstdc++ and libgcc (GPL-3.0-or-later
+with GCC Runtime Library Exception 3.1); their notices and license are in
+the runtime licenses directory.
 
 Shop, toy purchases, restore-purchase entry points, ad-removal buttons and promotions are
 omitted from drawing and input. This does not grant paid entitlements. Advertising,

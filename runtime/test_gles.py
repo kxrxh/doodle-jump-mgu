@@ -8,6 +8,47 @@ from test_arm import LIBRARY
 
 
 class GraphicsTests(unittest.TestCase):
+    def test_deleted_textures_disappear_from_the_resource_snapshot(self):
+        m = Arm(LIBRARY)
+        LibC(m)
+        renderer = importlib.import_module('gles').GLES(m, 1, 1)
+        identifier, pixel = m.malloc(4), m.malloc(4)
+        m.call(m.import_address('glGenTextures'), 1, identifier)
+        texture = m.u32(identifier)
+        m.call(m.import_address('glBindTexture'), 0xDE1, texture)
+        m.uc.mem_write(pixel, bytes((255, 0, 0, 255)))
+        m.call(m.import_address('glTexImage2D'), 0xDE1, 0, 0x1908, 1, 1, 0, 0x1908, 0x1401, pixel)
+        self.assertIn(texture, renderer.textures)
+        self.assertEqual(renderer.texture_info(texture)['pixels'], bytes((255, 0, 0, 255)))
+        m.call(m.import_address('glDeleteTextures'), 1, identifier)
+        self.assertNotIn(texture, renderer.textures)
+        with self.assertRaises(KeyError):
+            renderer.texture_info(texture)
+
+    def test_engine_graphics_calls_render_without_python_import_handlers(self):
+        m = Arm(LIBRARY)
+        LibC(m)
+        renderer = importlib.import_module('gles').GLES(m, 4, 4)
+        names = ('glClearColor', 'glClear', 'glMatrixMode', 'glOrthof', 'glColor4f',
+                 'glVertexPointer', 'glEnableClientState', 'glDrawArrays')
+        def python_handler():
+            self.fail('A graphics call crossed back into Python')
+        for name in names:
+            m.handlers[name] = python_handler
+        def gl(name, *args):
+            m.call(m.import_address(name), *[struct.unpack('<I', struct.pack('<f', x))[0] if isinstance(x, float) else x for x in args])
+        gl('glClearColor', 0.0, 0.0, 0.0, 1.0)
+        gl('glClear', 0x4000)
+        gl('glMatrixMode', 0x1701)
+        gl('glOrthof', 0.0, 4.0, 4.0, 0.0, -1.0, 1.0)
+        gl('glColor4f', 0.0, 1.0, 0.0, 1.0)
+        vertices = m.malloc(24)
+        m.uc.mem_write(vertices, struct.pack('<6f', 0, 0, 4, 0, 0, 4))
+        gl('glVertexPointer', 2, 0x1406, 0, vertices)
+        gl('glEnableClientState', 0x8074)
+        gl('glDrawArrays', 4, 0, 3)
+        self.assertEqual(renderer.image().getpixel((0, 0)), (0, 255, 0, 255))
+
     def test_overlay_interpolates_texture_with_primary_color_and_keeps_texture_alpha(self):
         m = Arm(LIBRARY)
         LibC(m)

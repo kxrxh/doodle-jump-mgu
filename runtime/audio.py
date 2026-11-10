@@ -1,20 +1,35 @@
 """Original Ogg effects and SoundPool messages, played through the host audio device."""
 from array import array
+import ctypes
 import threading
 
 import miniaudio
 
 from jni import Jni
+from native_backend import library
 
 
 class Audio:
     def __init__(self, assets, playback=True):
         self.assets=assets
-        self.sounds={}
-        self.voices={}
-        self.paused=False
         self.lock=threading.RLock()
         self.device=None
+        self.library=library()
+        self.library.audio_create.argtypes=[]
+        self.library.audio_create.restype=ctypes.c_void_p
+        self.library.audio_destroy.argtypes=[ctypes.c_void_p]
+        self.library.audio_destroy.restype=None
+        self.library.audio_error.argtypes=[ctypes.c_void_p]
+        self.library.audio_error.restype=ctypes.c_char_p
+        self.library.audio_load.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_void_p,ctypes.c_size_t,ctypes.c_int]
+        self.library.audio_load.restype=ctypes.c_int
+        self.library.audio_message.argtypes=[ctypes.c_void_p,ctypes.c_int,ctypes.c_uint32,ctypes.c_double,ctypes.c_int]
+        self.library.audio_message.restype=ctypes.c_int
+        self.library.audio_mix.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_size_t]
+        self.library.audio_mix.restype=ctypes.c_int
+        self.handle=self.library.audio_create()
+        if not self.handle:
+            raise RuntimeError(self.library.audio_error(None).decode())
         if playback:
             try:
                 self.device=miniaudio.PlaybackDevice(buffersize_msec=60)
@@ -27,55 +42,32 @@ class Audio:
                     self.device.close()
                 self.device=None
 
+    def check(self, result):
+        if result:
+            raise ValueError(self.library.audio_error(self.handle).decode())
+
+    def load(self, identifier, samples, loop=False):
+        samples=array('h',samples)
+        pointer=(ctypes.c_int16*len(samples)).from_buffer(samples)
+        with self.lock:
+            self.check(self.library.audio_load(self.handle,identifier,pointer,len(samples),bool(loop)))
+
     def __call__(self, message, identifier=0, volume=1.0, loop=0):
         with self.lock:
             if message==6:
                 path=Jni.path(self.assets,volume)
-                self.sounds[identifier]=(miniaudio.decode_file(str(path)).samples,bool(loop))
-            elif message==7:
-                self.sounds.pop(identifier,None)
-                self.voices.pop(identifier,None)
-            elif message==8 and identifier in self.sounds:
-                self.voices[identifier]=dict(at=0,volume=max(0,min(1,volume)),loops=loop,
-                                             paused=False)
-            elif message==9:
-                self.voices.pop(identifier,None)
-            elif message in (10,11) and identifier in self.voices:
-                self.voices[identifier]['paused']=message==10
-            elif message in (12,13):
-                self.paused=message==12
-            elif message==14:
-                self.voices.clear()
-            elif message==15 and identifier in self.voices:
-                self.voices[identifier]['volume']=max(0,min(1,volume))
+                self.load(identifier,miniaudio.decode_file(str(path)).samples,loop)
+            else:
+                self.check(self.library.audio_message(self.handle,message,identifier,volume,loop))
 
     def mix(self, frames):
-        output=[0]*(frames*2)
+        if type(frames) is not int or not 0<=frames<=1<<20:
+            raise ValueError('Invalid audio buffer')
+        output=array('h',b'\0'*(frames*4))
+        pointer=(ctypes.c_int16*len(output)).from_buffer(output)
         with self.lock:
-            if not self.paused:
-                for identifier,voice in list(self.voices.items()):
-                    if voice['paused']:
-                        continue
-                    samples,looping=self.sounds[identifier]
-                    if not samples:
-                        self.voices.pop(identifier,None)
-                        continue
-                    offset=0
-                    while offset<len(output):
-                        count=min(len(output)-offset,len(samples)-voice['at'])
-                        for i in range(count):
-                            output[offset+i]+=round(samples[voice['at']+i]*voice['volume'])
-                        offset+=count
-                        voice['at']+=count
-                        if voice['at']==len(samples):
-                            if looping or voice['loops']:
-                                voice['at']=0
-                                if voice['loops']>0:
-                                    voice['loops']-=1
-                            else:
-                                self.voices.pop(identifier,None)
-                                break
-        return array('h',(max(-32768,min(32767,value)) for value in output))
+            self.check(self.library.audio_mix(self.handle,pointer,frames))
+        return output
 
     def stream(self):
         frames=yield b''
@@ -85,3 +77,12 @@ class Audio:
     def close(self):
         if self.device:
             self.device.close()
+            self.device=None
+        with self.lock:
+            if self.handle:
+                self.library.audio_destroy(self.handle)
+                self.handle=None
+
+    def __del__(self):
+        if getattr(self,'handle',None):
+            self.close()

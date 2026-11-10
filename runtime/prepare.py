@@ -33,7 +33,10 @@ def main():
     subprocess.run(command+['bash','-ec',r'''
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends gcc make libc6-dev cmake pkg-config >/tmp/build.log
+apt-get install -y -qq --no-install-recommends gcc g++ make libc6-dev cmake pkg-config >data/build-toolchain.log 2>&1 || {
+    cat data/build-toolchain.log
+    exit 1
+}
 mkdir -p data/unicorn-build
 cd data/unicorn-build
 cmake ../unicorn-source/unicorn-2.1.4/src -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
@@ -55,17 +58,23 @@ int main(void) {
 C
 ./check-arm
 cd /work
-cc -shared -fPIC -O3 raster.c -o bundle/raster.so -lm
+cc -c -fPIC -O3 raster.c -o data/raster.o
+g++ -std=c++14 -shared -fPIC -O3 -pthread -static-libstdc++ -static-libgcc \
+    dispatch.cpp graphics.cpp audio.cpp data/raster.o -o bundle/native.so
+strip --strip-unneeded bundle/native.so
 '''],check=True)
     library=(BUNDLE/'site-packages/unicorn/lib/libunicorn.so.2').read_bytes()
     assert library[:5]==b'\x7fELF\x02' and library[18:20]==b'\x3e\x00','Expected a Linux x86-64 library'
-    for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery'):
+    for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery','native_backend'):
         shutil.copy2(ROOT/f'{name}.py',BUNDLE)
     subprocess.run(['clang','-target','armv7-none-eabi','-c',str(ROOT/'arm_helpers.S'),'-o',str(ROOT/'arm_helpers.o')],check=True)
-    for name in ('arm_helpers.S','arm_helpers.o','raster.c','LICENSE','NOTICE'):
+    for name in ('arm_helpers.S','arm_helpers.o','raster.c','dispatch.cpp','dispatch.h','graphics.cpp','audio.cpp','LICENSE','NOTICE'):
         shutil.copy2(ROOT/name,BUNDLE)
+    shutil.copytree(ROOT/'licenses',BUNDLE/'licenses')
     (BUNDLE/'arm_helpers.o').touch()
-    (BUNDLE/'raster.so').touch()
+    (BUNDLE/'native.so').touch()
+    from native_backend import source_digest
+    (BUNDLE/'native.so.sha256').write_text(source_digest(BUNDLE)+'\n')
     (BUNDLE/'assets').mkdir()
     shutil.copy2(ROOT/'assets/cursor.png',BUNDLE/'assets/cursor.png')
     shutil.copy2(ROOT/'bundle.packignore',BUNDLE/'.packignore')

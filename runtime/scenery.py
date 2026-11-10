@@ -42,7 +42,7 @@ class Scenery:
         if not g.background_info or not width:
             return []
         identifier,vertices=g.background_info
-        texture=g.textures[identifier]
+        texture=g.texture_info(identifier)
         key=(identifier,id(texture['pixels']),vertices,width)
         if key==self.key:
             return []
