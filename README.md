@@ -2,15 +2,21 @@
 
 Original Doodle Jump 3.10.0 for BMW iDrive 7. Touch, joystick and rotary ring controls.
 
-Local build: 65.8 MB package, about 190 MB after first launch.
+About 66 MB to download, about 190 MB after first launch.
 
 ## Install
 
-In mgu-store, add this source and install **Doodle Jump**:
+In mgu-store, add this GitHub source, select **Releases**, and install **Doodle Jump**:
 
-https://github.com/kxrxh/doodle-jump-mgu/tree/main
+https://github.com/kxrxh/doodle-jump-mgu
 
-Internet is required during installation. The build verifies and fetches the game files; BMW’s SDK comes from the head unit.
+The ready package includes the game files and runtime. Installation downloads and verifies the package without building the game or downloading an APK on the head unit. BMW’s SDK comes from the head unit. The `main` branch is for source builds.
+
+You can also add the catalog URL directly:
+
+https://raw.githubusercontent.com/kxrxh/doodle-jump-mgu/main/catalog.json
+
+The app uses mgu-store's renderer without installing a controller-gate tool. An existing HMI controller gate is reused through the renderer. Without one, touch controls remain available; the HMI retains the iDrive controller, so exclusive ring and joystick control is not guaranteed.
 
 ## Local
 

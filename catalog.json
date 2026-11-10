@@ -1,0 +1,27 @@
+{
+  "schema": 2,
+  "components": [
+    {
+      "id": "kxrxh_doodle_jump",
+      "kind": "app",
+      "version": "0.2.1",
+      "title": "Doodle Jump",
+      "description": "Doodle Jump for MGU7",
+      "author": "kxrxh",
+      "mguHmi": [
+        "ID7"
+      ],
+      "requires": {
+        "mgu-render": "0.6.12"
+      },
+      "icon": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/catalog/kxrxh_doodle_jump.png",
+      "iconSha256": "5eb833c388867f4d29701358f81687f6cf53a7140eb18376bdf491b679c7b581",
+      "artifact": {
+        "name": "kxrxh_doodle_jump@0.2.1.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.2.1/kxrxh_doodle_jump@0.2.1.tgz",
+        "size": 65835527,
+        "sha256": "c951fdab5ac3748243dc706c13fd8d28a1615244829924045eeece55ad00cc48"
+      }
+    }
+  ]
+}

@@ -35,5 +35,6 @@ Revision: cca7f9ad17f96b92e60a89ea98686afe1b662041
 See kit/LICENSE and kit/LICENSE.mgu-renderd. The controller gate and its
 source retain their upstream notices in native/inputgate/.
 
-Original APK and game assets are downloaded and verified during installation;
-they are not included in this repository or its runtime release.
+Source builds download and verify the original APK and game assets. Ready app
+packages include those verified files; the source repository and runtime-only
+release do not include them.
