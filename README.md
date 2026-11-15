@@ -19,6 +19,6 @@ To update, refresh the source in Store and install the latest version.
 
 Touch controls work without extra tools. iDrive controller support depends on your setup.
 
-Experimental: physical head-unit installation, audio and performance are not yet verified.
+Experimental: physical head-unit installation isn't tested yet
 
 ![Gameplay](docs/screenshots/gameplay.png)
