@@ -86,6 +86,31 @@ class AudioTests(unittest.TestCase):
             sound(9,123)
             self.assertEqual(sound.mix(1).tolist(),[0,0])
 
+    def test_missing_theme_sound_uses_shared_asset_and_prefers_theme_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            assets=Path(directory).resolve()
+            def write_sound(path, samples):
+                with wave.open(str(path),'wb') as output:
+                    output.setnchannels(2)
+                    output.setsampwidth(2)
+                    output.setframerate(44100)
+                    output.writeframes(array('h',samples).tobytes())
+            write_sound(assets/'shared.wav',[1000,-1000])
+            sound=Audio(assets,playback=False)
+            self.addCleanup(sound.close)
+            sound(6,123,'8bit/shared.wav')
+            sound(8,123)
+            self.assertEqual(sound.mix(1).tolist(),[1000,-1000])
+            (assets/'8bit').mkdir()
+            write_sound(assets/'8bit/shared.wav',[2000,-2000])
+            sound(6,123,'8bit/shared.wav')
+            sound(8,123)
+            self.assertEqual(sound.mix(1).tolist(),[2000,-2000])
+            with self.assertRaises(FileNotFoundError):
+                sound(6,123,'8bit/missing.wav')
+            with self.assertRaises(ValueError):
+                sound(6,123,'../shared.wav')
+
     def test_invalid_pcm_buffers_and_closed_handles_are_rejected(self):
         sound=Audio(Path('.'), playback=False)
         self.addCleanup(sound.close)

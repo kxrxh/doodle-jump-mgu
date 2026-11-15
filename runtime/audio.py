@@ -56,6 +56,9 @@ class Audio:
         with self.lock:
             if message==6:
                 path=Jni.path(self.assets,volume)
+                # Some themed effects are stored only in the shared asset directory.
+                if not path.exists():
+                    path=Jni.path(self.assets,path.name)
                 self.load(identifier,miniaudio.decode_file(str(path)).samples,loop)
             else:
                 self.check(self.library.audio_message(self.handle,message,identifier,volume,loop))

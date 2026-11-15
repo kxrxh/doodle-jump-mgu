@@ -236,9 +236,13 @@ struct Graphics {
         key.append(reinterpret_cast<const char *>(&value), sizeof(value));
     }
     void draw(NativeCall &call, uint32_t mode, const std::vector<uint32_t> &indices) {
+        Texture *tex = enabled[0xde1] && textures.count(texture) ? &textures.at(texture) : nullptr;
         auto matrix = multiply(matrices.at(0x1701).back(), matrices.at(0x1700).back());
         auto positions = attributes(call, 0x8074, indices, {{0, 0, 0, 1}});
-        auto uvs = attributes(call, 0x8078, indices, {{0, 0, 0, 1}});
+        // Empty engine placeholders can carry NaN UVs that the rasterizer never uses.
+        auto uvs = tex && tex->has_pixels()
+                       ? attributes(call, 0x8078, indices, {{0, 0, 0, 1}})
+                       : std::vector<std::array<double, 4>>(indices.size(), {{0, 0, 0, 1}});
         auto colors = attributes(call, 0x8076, indices, color);
         std::vector<Vertex> vertices;
         vertices.reserve(indices.size());
@@ -283,7 +287,6 @@ struct Graphics {
             throw std::runtime_error("Unsupported GLES primitive");
         if (triangles.empty())
             return;
-        Texture *tex = enabled[0xde1] && textures.count(texture) ? &textures.at(texture) : nullptr;
         Rectangle box{vertices[0][0], vertices[0][1], vertices[0][0], vertices[0][1],
                       tex ? tex->excluded : 0};
         for (const auto &v : vertices) {

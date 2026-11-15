@@ -63,6 +63,33 @@ class GraphicsTests(unittest.TestCase):
         self.assertEqual(snapshot[:8], bytes((0, 0, 0, 0, 0, 0, 0, 17)))
         self.assertEqual(snapshot[-4:], bytes((0, 51, 255, 255)))
 
+    def test_draw_without_sampled_texture_ignores_unused_nonfinite_uvs(self):
+        for state in ('unbound', 'empty', 'disabled'):
+            with self.subTest(state=state):
+                m, renderer, gl, upload, draw = self.compact_context()
+                draw()
+                if state == 'unbound':
+                    gl('glBindTexture', 0xDE1, 0)
+                elif state == 'disabled':
+                    upload(bytes((255, 255, 255, 255)), 1, 1)
+                    gl('glDisable', 0xDE1)
+                uv = m.malloc(32)
+                m.uc.mem_write(uv, struct.pack('<8f', *([float('nan'), float('inf')] * 4)))
+                gl('glTexCoordPointer', 2, 0x1406, 0, uv)
+                gl('glColor4f', 1.0, 0.0, 0.0, 1.0)
+                gl('glDrawArrays', 5, 0, 4)
+                self.assertEqual(renderer.image().getpixel((1, 1)), (255, 0, 0, 255))
+
+    def test_sampled_texture_still_rejects_nonfinite_uvs(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        upload(bytes((255, 255, 255, 255)), 1, 1)
+        draw()
+        uv = m.malloc(32)
+        m.uc.mem_write(uv, struct.pack('<8f', *([float('nan'), float('inf')] * 4)))
+        gl('glTexCoordPointer', 2, 0x1406, 0, uv)
+        with self.assertRaisesRegex(RuntimeError, 'Nonfinite GLES attribute'):
+            gl('glDrawArrays', 5, 0, 4)
+
     def test_palette_sampling_keeps_bilinear_repeat_and_nearest_clamp(self):
         m, renderer, gl, upload, draw = self.compact_context()
         shared = renderer.texture_storage_bytes

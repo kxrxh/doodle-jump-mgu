@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from game import Game
+from audio import Audio
 from test_arm import LIBRARY
 
 
@@ -35,8 +36,10 @@ class ThemeTests(unittest.TestCase):
                     '<DoodleJumpHScore value="10000" />\n'
                     f'<DoodleJumpActiveTheme value="{identifier}" />\n'
                     f'<DoodleJumpDefaultTheme value="{identifier}" />\n')
-                with contextlib.redirect_stdout(io.StringIO()):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.closing(
+                        Audio(LIBRARY.parents[3] / 'extracted/assets', playback=False)) as audio:
                     game = Game(LIBRARY.parents[3], data)
+                    game.jni.audio = audio
                     for _ in range(240):
                         image = game.step()
                     self.assertGreater(len(image.convert('RGB').getcolors(image.width * image.height)), 32)
@@ -44,12 +47,15 @@ class ThemeTests(unittest.TestCase):
                                   'The selected theme must load its own texture instead of falling back to classic')
                     game.step(touches=[(0, 0, 180, 295)])
                     game.step(touches=[(0, 2, 180, 295)])
+                    audible = False
                     for _ in range(120):
                         image = game.step()
-                        if game.jni.playing and len(image.convert('RGB').getcolors(image.width * image.height)) > 32:
+                        audible |= any(audio.mix(256))
+                        if audible and game.jni.playing and len(image.convert('RGB').getcolors(image.width * image.height)) > 32:
                             break
                     self.assertTrue(game.jni.playing, 'The selected theme must start when Play is pressed')
                     self.assertGreater(len(image.convert('RGB').getcolors(image.width * image.height)), 32)
+                    self.assertTrue(audible, 'The selected theme must play its original sound effects')
                 del game
                 gc.collect()
 
