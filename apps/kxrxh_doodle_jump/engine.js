@@ -6,6 +6,9 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const MAX_PACKET = 2048 * 2048 * 4 + 12;
+const PACK_CHUNK = 1 << 20;
+const MAX_PACK_INDEX = 1 << 20;
+const MAX_PACK_ENTRY = 16 << 20;
 
 class PacketReader {
     constructor(receive) { this.receive = receive; this.header = Buffer.alloc(8); this.at = 0; this.body = null; this.used = 0; }
@@ -49,29 +52,60 @@ function clearCache(directory) {
     });
 }
 
+function readPack(fd, buffer, position, length) {
+    let offset = 0;
+    while (offset < length) {
+        const n = fs.readSync(fd, buffer, offset, Math.min(PACK_CHUNK, length - offset), position + offset);
+        if (!n) throw new Error('Truncated engine data pack');
+        offset += n;
+    }
+    return buffer;
+}
+
 function unpack(file, directory) {
-    const source = fs.readFileSync(file);
-    const digest = crypto.createHash('sha256').update(source).digest('hex');
-    const marker = path.join(directory, '.sha256');
-    try { if (fs.readFileSync(marker, 'utf8') === digest) return; } catch (e) { /* first run */ }
-    if (source.toString('ascii', 0, 8) !== 'MGUPACK1') throw new Error('Invalid engine data pack');
-    const length = source.readUInt32LE(8), base = 12 + length;
-    if (base > source.length) throw new Error('Invalid engine pack index');
-    const index = JSON.parse(zlib.inflateRawSync(source.slice(12, base)).toString('utf8'));
-    const root = path.resolve(directory);
-    Object.keys(index.files).forEach((name) => {
-        const destination = path.resolve(root, name), part = index.files[name];
-        if (destination.indexOf(root + path.sep) !== 0 || name.indexOf('\0') >= 0) throw new Error('Unsafe engine pack path');
-        if (!Array.isArray(part) || part.length !== 2 || !part.every(Number.isSafeInteger) ||
-            part[0] < 0 || part[1] < 0 || base + part[0] + part[1] > source.length) throw new Error('Invalid engine pack range');
-    });
-    clearCache(root);
-    Object.keys(index.files).forEach((name) => {
-        const destination=path.resolve(root,name),part=index.files[name];
-        mkdir(path.dirname(destination));
-        fs.writeFileSync(destination, zlib.inflateRawSync(source.slice(base + part[0], base + part[0] + part[1])));
-    });
-    fs.writeFileSync(marker, digest);
+    const fd = fs.openSync(file, 'r');
+    try {
+        const stat = fs.fstatSync(fd), root = path.resolve(directory), marker = path.join(root, '.sha256');
+        if (!stat.isFile() || !Number.isSafeInteger(stat.size) || stat.size < 12) throw new Error('Invalid or truncated engine data pack');
+        try {
+            if (!fs.lstatSync(root).isDirectory()) throw new Error('Unsafe engine cache directory');
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        const hash = crypto.createHash('sha256'), chunk = Buffer.allocUnsafe(Math.min(PACK_CHUNK, stat.size));
+        for (let offset = 0; offset < stat.size; offset += chunk.length) {
+            const n = Math.min(chunk.length, stat.size - offset);
+            hash.update(readPack(fd, chunk, offset, n).slice(0, n));
+        }
+        const digest = hash.digest('hex');
+        try {
+            const cached = fs.lstatSync(marker);
+            if (cached.isFile() && cached.size === digest.length && fs.readFileSync(marker, 'utf8') === digest) return;
+        } catch (e) { /* first run */ }
+        const header = readPack(fd, Buffer.allocUnsafe(12), 0, 12);
+        if (header.toString('ascii', 0, 8) !== 'MGUPACK1') throw new Error('Invalid engine data pack');
+        const length = header.readUInt32LE(8), base = 12 + length;
+        if (!length || length > MAX_PACK_INDEX || base > stat.size) throw new Error('Invalid engine pack index');
+        const index = JSON.parse(zlib.inflateRawSync(readPack(fd, Buffer.allocUnsafe(length), 12, length)).toString('utf8'));
+        if (!index || !index.files || typeof index.files !== 'object' || Array.isArray(index.files)) throw new Error('Invalid engine pack index');
+        const files = Object.keys(index.files);
+        let maxEntry = 0;
+        files.forEach((name) => {
+            const destination = path.resolve(root, name), part = index.files[name];
+            if (destination.indexOf(root + path.sep) !== 0 || name.indexOf('\0') >= 0) throw new Error('Unsafe engine pack path');
+            if (!Array.isArray(part) || part.length !== 2 || !part.every(Number.isSafeInteger) ||
+                part[0] < 0 || part[1] <= 0 || part[1] > MAX_PACK_ENTRY ||
+                part[0] > stat.size - base - part[1]) throw new Error('Invalid engine pack range');
+            maxEntry = Math.max(maxEntry, part[1]);
+        });
+        const compressed = Buffer.allocUnsafe(maxEntry);
+        clearCache(root);
+        files.forEach((name) => {
+            const destination = path.resolve(root, name), part = index.files[name];
+            mkdir(path.dirname(destination));
+            readPack(fd, compressed, base + part[0], part[1]);
+            fs.writeFileSync(destination, zlib.inflateRawSync(compressed.slice(0, part[1])));
+        });
+        fs.writeFileSync(marker, digest);
+    } finally { fs.closeSync(fd); }
 }
 
 class Engine {

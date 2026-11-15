@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdint.h>
+#include "texture.h"
 
 typedef struct { float x, y, u, v, r, g, b, a; } Vertex;
 
@@ -46,8 +47,29 @@ static float factor(int mode, float alpha) {
     return mode == 0 ? 0 : mode == 1 ? 1 : mode == 770 ? alpha : 1 - alpha;
 }
 
-void raster(uint8_t *out, int width, int height, const Vertex *vertices, int count,
-            const uint8_t *texture, int tw, int th, int linear, int repeat_s, int repeat_t,
+static inline void texture_addresses(const TextureView *texture, const int *indices,
+                                     const uint8_t **out, uint32_t *rgb) {
+    const uint8_t *p = texture->pixels;
+    /* Read palette entries as RGBA bytes so interpolation needs no channel shifts. */
+#define ADDRESSES(address) for (int i = 0; i < 4; i++) out[i] = (const uint8_t *)(address)
+    switch (texture->format) {
+    case TEXTURE_CONSTANT: ADDRESSES(texture->palette); break;
+    case TEXTURE_INDEX8: ADDRESSES(texture->palette + p[indices[i]]); break;
+    case TEXTURE_INDEX16:
+        ADDRESSES(texture->palette + (p[indices[i]*2] | (p[indices[i]*2+1] << 8))); break;
+    case TEXTURE_RGB8:
+        for (int i = 0; i < 4; i++) {
+            rgb[i] = texture_pixel(texture, indices[i]);
+            out[i] = (const uint8_t *)(rgb + i);
+        }
+        break;
+    default: ADDRESSES(p + indices[i] * 4); break;
+    }
+#undef ADDRESSES
+}
+
+void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices, int count,
+            const TextureView *texture, int tw, int th, int linear, int repeat_s, int repeat_t,
             int blend, int source, int destination, int replace) {
     for (int n = 0; n + 2 < count; n += 3) {
         Vertex a = vertices[n], b = vertices[n + 1], c = vertices[n + 2];
@@ -81,13 +103,17 @@ void raster(uint8_t *out, int width, int height, const Vertex *vertices, int cou
                 float tx = u * tw - (linear ? 0.5f : 0), ty = v * th - (linear ? 0.5f : 0);
                 int ix = (int)floorf(tx), iy = (int)floorf(ty);
                 float fx = linear ? tx - ix : 0, fy = linear ? ty - iy : 0;
-                int p00 = (texel(iy, th, repeat_t) * tw + texel(ix, tw, repeat_s)) * 4;
-                int p10 = (texel(iy, th, repeat_t) * tw + texel(ix + 1, tw, repeat_s)) * 4;
-                int p01 = (texel(iy + 1, th, repeat_t) * tw + texel(ix, tw, repeat_s)) * 4;
-                int p11 = (texel(iy + 1, th, repeat_t) * tw + texel(ix + 1, tw, repeat_s)) * 4;
+                uint32_t rgb[4];
+                const uint8_t *samples[4];
+                int indices[4] = {
+                    texel(iy, th, repeat_t) * tw + texel(ix, tw, repeat_s),
+                    texel(iy, th, repeat_t) * tw + texel(ix + 1, tw, repeat_s),
+                    texel(iy + 1, th, repeat_t) * tw + texel(ix, tw, repeat_s),
+                    texel(iy + 1, th, repeat_t) * tw + texel(ix + 1, tw, repeat_s)};
+                texture_addresses(texture, indices, samples, rgb);
                 for (int k = 0; k < 4; k++)
-                    rgba[k] = (texture[p00+k] * (1-fx) + texture[p10+k] * fx) * (1-fy) +
-                              (texture[p01+k] * (1-fx) + texture[p11+k] * fx) * fy;
+                    rgba[k] = (samples[0][k] * (1-fx) + samples[1][k] * fx) * (1-fy) +
+                              (samples[2][k] * (1-fx) + samples[3][k] * fx) * fy;
             }
             if (replace == 2 && texture) {
                 for (int k = 0; k < 3; k++) rgba[k] = color[k] * 255 * color[3] + rgba[k] * (1 - color[3]);
@@ -104,4 +130,13 @@ void raster(uint8_t *out, int width, int height, const Vertex *vertices, int cou
             }
         }
     }
+}
+
+/* Scenery passes decoded RGBA snapshots through this existing ABI. */
+void raster(uint8_t *out, int width, int height, const Vertex *vertices, int count,
+            const uint8_t *texture, int tw, int th, int linear, int repeat_s, int repeat_t,
+            int blend, int source, int destination, int replace) {
+    TextureView view = {texture, NULL, TEXTURE_RGBA8};
+    raster_compact(out, width, height, vertices, count, texture ? &view : NULL, tw, th, linear,
+                   repeat_s, repeat_t, blend, source, destination, replace);
 }

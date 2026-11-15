@@ -1,3 +1,4 @@
+import ctypes
 import importlib
 import struct
 import unittest
@@ -8,6 +9,139 @@ from test_arm import LIBRARY
 
 
 class GraphicsTests(unittest.TestCase):
+    def compact_context(self, width=4, height=4):
+        m = Arm(LIBRARY)
+        LibC(m)
+        renderer = importlib.import_module('gles').GLES(m, width, height)
+        def gl(name, *args):
+            m.call(m.import_address(name), *[struct.unpack('<I', struct.pack('<f', x))[0]
+                if isinstance(x, float) else x for x in args])
+        identifier = m.malloc(4)
+        gl('glGenTextures', 1, identifier)
+        gl('glBindTexture', 0xDE1, m.u32(identifier))
+        def upload(pixels, w, h, kind=0x1401, fmt=0x1908):
+            pointer = m.malloc(len(pixels))
+            m.uc.mem_write(pointer, pixels)
+            gl('glTexImage2D', 0xDE1, 0, fmt, w, h, 0, fmt, kind, pointer)
+            return pointer
+        def draw():
+            vertices, uv = m.malloc(32), m.malloc(32)
+            m.uc.mem_write(vertices, struct.pack('<8f', 0, 0, width, 0, 0, height, width, height))
+            m.uc.mem_write(uv, struct.pack('<8f', 0, 0, 1, 0, 0, 1, 1, 1))
+            gl('glMatrixMode', 0x1701)
+            gl('glOrthof', 0.0, float(width), float(height), 0.0, -1.0, 1.0)
+            gl('glVertexPointer', 2, 0x1406, 0, vertices)
+            gl('glTexCoordPointer', 2, 0x1406, 0, uv)
+            gl('glEnableClientState', 0x8074)
+            gl('glEnableClientState', 0x8078)
+            gl('glEnable', 0xDE1)
+            gl('glDrawArrays', 5, 0, 4)
+        return m, renderer, gl, upload, draw
+
+    def test_exact_palettes_reduce_storage_without_retaining_rgba_snapshots(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        shared = renderer.texture_storage_bytes
+        for colors, width, height, limit in ((2, 32, 32, 1032), (300, 64, 64, 9392)):
+            with self.subTest(colors=colors):
+                pixels = b''.join(bytes((i % colors & 255, (i % colors) >> 8, 53, 255))
+                                  for i in range(width * height))
+                upload(pixels, width, height)
+                self.assertLessEqual(renderer.texture_storage_bytes - shared, limit)
+                allocated = renderer.texture_storage_bytes
+                self.assertEqual(renderer.texture_info(1)['pixels'], pixels)
+                self.assertEqual(renderer.texture_storage_bytes, allocated)
+
+    def test_packed_texture_keeps_two_bytes_per_texel_and_owns_its_upload(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        upload(struct.pack('<H', 0), 1, 1, 0x8033)
+        lookup_storage = renderer.texture_storage_bytes
+        pixels = struct.pack('<1024H', *range(1024))
+        pointer = upload(pixels, 32, 32, 0x8033)
+        self.assertLessEqual(renderer.texture_storage_bytes, lookup_storage + len(pixels))
+        m.uc.mem_write(pointer, bytes(len(pixels)))
+        snapshot = renderer.texture_info(1)['pixels']
+        self.assertEqual(snapshot[:8], bytes((0, 0, 0, 0, 0, 0, 0, 17)))
+        self.assertEqual(snapshot[-4:], bytes((0, 51, 255, 255)))
+
+    def test_palette_sampling_keeps_bilinear_repeat_and_nearest_clamp(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        shared = renderer.texture_storage_bytes
+        red, blue = bytes((255, 0, 0, 255)), bytes((0, 0, 255, 255))
+        upload(red + blue + blue + red, 2, 2)
+        self.assertLessEqual(renderer.texture_storage_bytes - shared, 12)
+        draw()
+        self.assertEqual(renderer.image().getpixel((0, 0)), (159, 0, 96, 255))
+        self.assertEqual(renderer.image().getpixel((2, 0)), (96, 0, 159, 255))
+        gl('glTexParameteri', 0xDE1, 0x2800, 9728)
+        gl('glTexParameteri', 0xDE1, 0x2802, 33071)
+        gl('glTexParameteri', 0xDE1, 0x2803, 33071)
+        gl('glLoadIdentity')
+        draw()
+        self.assertEqual(renderer.image().getpixel((0, 0)), (255, 0, 0, 255))
+        self.assertEqual(renderer.image().getpixel((2, 0)), (0, 0, 255, 255))
+
+    def test_excluded_texture_omits_pixels_and_keeps_its_input_rectangle(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        shared = renderer.texture_storage_bytes
+        renderer.asset_name = 'newspanel_L.png'
+        upload(bytes((255, 0, 0, 255)) * 1024, 32, 32)
+        self.assertEqual(renderer.texture_storage_bytes, shared)
+        info = renderer.texture_info(1)
+        self.assertEqual((info['width'], info['height'], info['pixels']), (32, 32, b''))
+        draw()
+        self.assertEqual(renderer.image().getpixel((0, 0)), (0, 0, 0, 0))
+        self.assertEqual(renderer.excluded_rectangles, [(0.0, 0.0, 4.0, 4.0)])
+
+    def test_dense_upload_replacement_and_deletion_release_storage(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        shared = renderer.texture_storage_bytes
+        pixels = b''.join(bytes((i & 255, i >> 8 & 255, i >> 16, 255)) for i in range(257 * 256))
+        upload(pixels, 257, 256)
+        self.assertEqual(renderer.texture_storage_bytes - shared, len(pixels))
+        self.assertEqual(renderer.texture_info(1)['pixels'], pixels)
+        upload(bytes((1, 2, 3, 4)) * 1024, 32, 32)
+        self.assertLessEqual(renderer.texture_storage_bytes - shared, 4)
+        identifier = m.malloc(4)
+        m.uc.mem_write(identifier, struct.pack('<I', 1))
+        gl('glDeleteTextures', 1, identifier)
+        self.assertEqual(renderer.texture_storage_bytes, shared)
+
+    def test_packed_alpha_is_preserved_by_bilinear_sampling(self):
+        for kind, values, expected in (
+                (0x8033, (0xF000, 0x0F0F, 0x00F8, 0xFFFF), (159, 64, 64, 89)),
+                (0x8034, (0xF800, 0x07C1, 0x003F, 0xFFFF), (159, 64, 64, 112)),
+                (0x8363, (0xF800, 0x07E0, 0x001F, 0xFFFF), (159, 64, 64, 255))):
+            with self.subTest(kind=kind):
+                m, renderer, gl, upload, draw = self.compact_context()
+                upload(struct.pack('<4H', *values), 2, 2, kind)
+                draw()
+                self.assertEqual(renderer.image().getpixel((0, 0)), expected)
+
+    def test_rgba_accessor_checks_output_bounds_without_writing(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        upload(bytes((1, 2, 3, 4)), 1, 1)
+        output = ctypes.create_string_buffer(b'untouched')
+        read = renderer.library.graphics_texture_rgba
+        for handle, texture, pointer, size in ((renderer._handle, 1, output, len(output)),
+                (renderer._handle, 2, output, 4), (None, 1, output, 4),
+                (renderer._handle, 1, None, 4)):
+            with self.subTest(texture=texture, size=size, null_output=pointer is None):
+                self.assertEqual(read(handle, texture, pointer, size), 0)
+                self.assertEqual(output.value, b'untouched')
+        self.assertEqual(read(renderer._handle, 1, output, 4), 1)
+        self.assertEqual(output.raw[:4], bytes((1, 2, 3, 4)))
+
+    def test_null_packed_upload_is_transparent_and_generated_text_is_compact(self):
+        m, renderer, gl, upload, draw = self.compact_context()
+        gl('glTexImage2D', 0xDE1, 0, 0x1907, 32, 32, 0, 0x1907, 0x8363, 0)
+        self.assertEqual(renderer.texture_info(1)['pixels'], bytes(32 * 32 * 4))
+        shared = renderer.texture_storage_bytes
+        pixels = bytes((0, 0, 0, 127)) * (32 * 32)
+        identifier = renderer.library.graphics_text_texture(renderer._handle, 32, 32, pixels)
+        self.assertGreater(identifier, 0)
+        self.assertLessEqual(renderer.texture_storage_bytes - shared, 4)
+        self.assertEqual(renderer.texture_info(identifier)['pixels'], pixels)
+
     def test_deleted_textures_disappear_from_the_resource_snapshot(self):
         m = Arm(LIBRARY)
         LibC(m)

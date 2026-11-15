@@ -12,7 +12,7 @@ from native_backend import library
 
 class TextureInfo(ctypes.Structure):
     _fields_ = [('width', ctypes.c_uint32), ('height', ctypes.c_uint32),
-                ('pixels', ctypes.c_void_p), ('size', ctypes.c_size_t),
+                ('size', ctypes.c_size_t),
                 ('asset', ctypes.c_char_p), ('excluded', ctypes.c_int), ('revision', ctypes.c_uint64)]
 
 
@@ -51,9 +51,11 @@ class GLES:
             'graphics_draws': ([ctypes.c_void_p], ctypes.c_uint64),
             'graphics_bound_texture': ([ctypes.c_void_p], ctypes.c_uint32),
             'graphics_revision': ([ctypes.c_void_p], ctypes.c_uint64),
+            'graphics_texture_storage_bytes': ([ctypes.c_void_p], ctypes.c_uint64),
             'graphics_texture_count': ([ctypes.c_void_p], ctypes.c_uint32),
             'graphics_texture_id': ([ctypes.c_void_p, ctypes.c_uint32], ctypes.c_uint32),
             'graphics_texture_info': ([ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(TextureInfo)], ctypes.c_int),
+            'graphics_texture_rgba': ([ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_size_t], ctypes.c_int),
             'graphics_rectangles': ([ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(Rectangle))], ctypes.c_uint32),
             'graphics_reset_rectangles': ([ctypes.c_void_p], None),
             'graphics_background': ([ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_double)], ctypes.c_uint32),
@@ -95,6 +97,10 @@ class GLES:
         return self.library.graphics_bound_texture(self._handle)
 
     @property
+    def texture_storage_bytes(self):
+        return self.library.graphics_texture_storage_bytes(self._handle)
+
+    @property
     def textures(self):
         revision = self.library.graphics_revision(self._handle)
         if revision != self._texture_revision:
@@ -113,8 +119,11 @@ class GLES:
             raise KeyError(identifier)
         value = self._textures.get(identifier)
         if value is None or value['revision'] != info.revision:
+            pixels = ctypes.create_string_buffer(info.size)
+            if not self.library.graphics_texture_rgba(self._handle, identifier, pixels, info.size):
+                raise RuntimeError('Could not read native texture pixels')
             value = dict(width=info.width, height=info.height,
-                pixels=ctypes.string_at(info.pixels, info.size), asset=info.asset.decode(),
+                pixels=pixels.raw, asset=info.asset.decode(),
                 excluded=bool(info.excluded), revision=info.revision)
             self._textures[identifier] = value
         return value

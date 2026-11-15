@@ -1,18 +1,47 @@
 #include "dispatch.h"
+#include "texture.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-extern "C" void raster(uint8_t *, int, int, const float *, int, const uint8_t *, int, int, int, int,
-                       int, int, int, int, int);
-extern "C" void unpack16(uint8_t *, const uint16_t *, int, int);
+extern "C" void raster_compact(uint8_t *, int, int, const float *, int, const TextureView *, int,
+                               int, int, int, int, int, int, int, int);
 namespace {
+std::atomic<uint64_t> lookup_storage{0};
+uint32_t rgba(unsigned r, unsigned g, unsigned b, unsigned a) {
+    return r | (g << 8) | (b << 16) | (a << 24);
+}
+template <int Kind, size_t Count> const uint32_t *lookup() {
+    static const std::array<uint32_t, Count> table = [] {
+        std::array<uint32_t, Count> values{};
+        for (unsigned v = 0; v < Count; ++v) {
+            if (Kind == 0x8363)
+                values[v] = rgba((v >> 11) * 255 / 31, ((v >> 5) & 63) * 255 / 63,
+                                 (v & 31) * 255 / 31, 255);
+            else if (Kind == 0x8033)
+                values[v] =
+                    rgba((v >> 12) * 17, ((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17);
+            else if (Kind == 0x8034)
+                values[v] = rgba((v >> 11) * 255 / 31, ((v >> 6) & 31) * 255 / 31,
+                                 ((v >> 1) & 31) * 255 / 31, (v & 1) * 255);
+            else if (Kind == 0x1906)
+                values[v] = rgba(255, 255, 255, v);
+            else
+                values[v] = rgba(v & 255, v & 255, v & 255, Kind == 0x190a ? v >> 8 : 255);
+        }
+        lookup_storage += sizeof(values);
+        return values;
+    }();
+    return table.data();
+}
 using Matrix = std::array<double, 16>;
 using Vertex = std::array<double, 8>;
 const Matrix identity{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
@@ -31,8 +60,58 @@ struct Texture {
     int width = 0, height = 0, excluded = 0;
     uint64_t revision = 0;
     std::vector<uint8_t> pixels;
+    std::vector<uint32_t> palette;
+    const uint32_t *shared_palette = nullptr;
+    int format = TEXTURE_RGBA8;
     std::string asset;
     std::map<uint32_t, uint32_t> params;
+    TextureView view() const {
+        return {pixels.data(), palette.empty() ? shared_palette : palette.data(), format};
+    }
+    bool has_pixels() const { return !pixels.empty() || !palette.empty(); }
+    void clear_pixels() {
+        std::vector<uint8_t>().swap(pixels);
+        std::vector<uint32_t>().swap(palette);
+        shared_palette = nullptr;
+        format = TEXTURE_RGBA8;
+    }
+    void compact(unsigned bytes_per_pixel) {
+        const size_t count = size_t(width) * height;
+        if (!count)
+            return;
+        auto source = view();
+        const unsigned max_colors = bytes_per_pixel <= 2 ? 256 : 65536;
+        std::unordered_map<uint32_t, uint16_t> colors;
+        std::vector<uint32_t> entries;
+        for (size_t i = 0; i < count; ++i) {
+            auto color = texture_pixel(&source, i);
+            if (!colors.count(color)) {
+                if (colors.size() == max_colors)
+                    return;
+                colors.emplace(color, uint16_t(entries.size()));
+                entries.push_back(color);
+            }
+        }
+        const unsigned index_bytes = entries.size() == 1 ? 0 : entries.size() <= 256 ? 1 : 2;
+        if (count * index_bytes + entries.size() * sizeof(uint32_t) >= pixels.size())
+            return;
+        std::vector<uint8_t> indices(count * index_bytes);
+        if (index_bytes)
+            for (size_t i = 0; i < count; ++i) {
+                auto index = colors.at(texture_pixel(&source, i));
+                indices[i * index_bytes] = index & 255;
+                if (index_bytes == 2)
+                    indices[i * 2 + 1] = index >> 8;
+            }
+        pixels.swap(indices);
+        // Release both an old upload's capacity and the palette scan's growth
+        // slack.
+        std::vector<uint32_t>(entries.begin(), entries.end()).swap(palette);
+        shared_palette = nullptr;
+        format = index_bytes == 0   ? TEXTURE_CONSTANT
+                 : index_bytes == 1 ? TEXTURE_INDEX8
+                                    : TEXTURE_INDEX16;
+    }
 };
 struct Unit {
     uint32_t texture = 0;
@@ -125,7 +204,8 @@ struct Graphics {
         values.reserve(indices.size());
         for (auto index : indices) {
             auto value = defaults;
-            // Missing position Z/W follow GLES defaults, rather than stale client data.
+            // Missing position Z/W follow GLES defaults, rather than stale client
+            // data.
             if (which == 0x8074)
                 value = {{0, 0, 0, 1}};
             const uint8_t *bytes = raw.data() + (index - *bounds.first) * step;
@@ -248,10 +328,12 @@ struct Graphics {
         auto param = [&](uint32_t name, uint32_t fallback) {
             return tex && tex->params.count(name) ? tex->params.at(name) : fallback;
         };
-        raster(frame, width, height, data.data(), triangles.size(),
-               tex && !tex->pixels.empty() ? tex->pixels.data() : nullptr, tex ? tex->width : 0,
-               tex ? tex->height : 0, param(0x2800, 9729) == 9729, param(0x2802, 10497) == 10497,
-               param(0x2803, 10497) == 10497, enabled[0xbe2], source, destination, replace);
+        auto view = tex ? tex->view() : TextureView{};
+        raster_compact(frame, width, height, data.data(), triangles.size(),
+                       tex && tex->has_pixels() ? &view : nullptr, tex ? tex->width : 0,
+                       tex ? tex->height : 0, param(0x2800, 9729) == 9729,
+                       param(0x2802, 10497) == 10497, param(0x2803, 10497) == 10497, enabled[0xbe2],
+                       source, destination, replace);
         if (cached) {
             cache_key = std::move(key);
             cache.assign(frame, frame + size_t(width) * height * 4);
@@ -268,38 +350,43 @@ struct Graphics {
         t.asset = asset;
         t.excluded = asset_excluded;
         t.revision = ++revision;
-        t.pixels.assign(size_t(w) * h * 4, 0);
-        if (!pointer)
+        t.clear_pixels();
+        if (t.excluded || !w || !h)
             return;
+        if (!pointer) {
+            t.palette = {0};
+            t.format = TEXTURE_CONSTANT;
+            return;
+        }
+        unsigned channels;
         if (kind == 0x1401) {
-            int channels = fmt == 0x1908                      ? 4
-                           : fmt == 0x1907                    ? 3
-                           : fmt == 0x190a                    ? 2
-                           : (fmt == 0x1906 || fmt == 0x1909) ? 1
-                                                              : 0;
+            channels = fmt == 0x1908                      ? 4
+                       : fmt == 0x1907                    ? 3
+                       : fmt == 0x190a                    ? 2
+                       : (fmt == 0x1906 || fmt == 0x1909) ? 1
+                                                          : 0;
             if (!channels)
                 throw std::runtime_error("Unsupported GLES texture format");
-            auto raw = read(call, 0, pointer, size_t(w) * h * channels);
-            for (size_t i = 0; i < size_t(w) * h; ++i) {
-                auto *out = t.pixels.data() + i * 4;
-                const auto *in = raw.data() + i * channels;
-                if (fmt == 0x1906) {
-                    out[0] = out[1] = out[2] = 255;
-                    out[3] = in[0];
-                } else if (channels <= 2) {
-                    out[0] = out[1] = out[2] = in[0];
-                    out[3] = channels == 2 ? in[1] : 255;
-                } else {
-                    std::copy_n(in, channels, out);
-                    if (channels == 3)
-                        out[3] = 255;
-                }
-            }
+            t.format = channels == 4   ? TEXTURE_RGBA8
+                       : channels == 3 ? TEXTURE_RGB8
+                       : channels == 2 ? TEXTURE_INDEX16
+                                       : TEXTURE_INDEX8;
+            if (fmt == 0x1906)
+                t.shared_palette = lookup<0x1906, 256>();
+            else if (fmt == 0x1909)
+                t.shared_palette = lookup<0x1909, 256>();
+            else if (fmt == 0x190a)
+                t.shared_palette = lookup<0x190a, 65536>();
         } else if (kind == 0x8363 || kind == 0x8033 || kind == 0x8034) {
-            auto raw = read(call, 0, pointer, size_t(w) * h * 2);
-            unpack16(t.pixels.data(), reinterpret_cast<const uint16_t *>(raw.data()), w * h, kind);
+            channels = 2;
+            t.format = TEXTURE_INDEX16;
+            t.shared_palette = kind == 0x8363   ? lookup<0x8363, 65536>()
+                               : kind == 0x8033 ? lookup<0x8033, 65536>()
+                                                : lookup<0x8034, 65536>();
         } else
             throw std::runtime_error("Unsupported GLES texture type");
+        t.pixels = read(call, 0, pointer, size_t(w) * h * channels);
+        t.compact(channels);
     }
     void call(NativeCall &c, NativeResult &result) {
         const std::string name(c.name);
@@ -349,8 +436,8 @@ struct Graphics {
                     {0x2200, 0x8570}, {0x8571, 0x8575}, {0x8580, 0x8578}, {0x8581, 0x1702},
                     {0x8582, 0x8578}, {0x8590, 0x300},  {0x8591, 0x300},  {0x8592, 0x302},
                     {0x8572, 0x1e01}, {0x8588, 0x1702}, {0x8598, 0x302}};
-                // shortcut: other combiners retain modulation; extend when their effects are
-                // implemented.
+                // shortcut: other combiners retain modulation; extend when their
+                // effects are implemented.
                 replace = 2;
                 for (auto item : overlay)
                     if (!environment.count(item.first) || environment[item.first] != item.second) {
@@ -529,6 +616,14 @@ void graphics_asset(void *handle, const char *asset, int excluded) {
 uint64_t graphics_draws(void *handle) { return static_cast<Graphics *>(handle)->draws; }
 uint32_t graphics_bound_texture(void *handle) { return static_cast<Graphics *>(handle)->texture; }
 uint64_t graphics_revision(void *handle) { return static_cast<Graphics *>(handle)->revision; }
+uint64_t graphics_texture_storage_bytes(void *handle) {
+    uint64_t bytes = lookup_storage;
+    for (const auto &entry : static_cast<Graphics *>(handle)->textures) {
+        const auto &texture = entry.second;
+        bytes += texture.pixels.capacity() + texture.palette.capacity() * sizeof(uint32_t);
+    }
+    return bytes;
+}
 uint32_t graphics_texture_count(void *handle) {
     return static_cast<Graphics *>(handle)->textures.size();
 }
@@ -540,7 +635,6 @@ uint32_t graphics_texture_id(void *handle, uint32_t index) {
 }
 struct TextureInfo {
     uint32_t width, height;
-    const uint8_t *pixels;
     size_t size;
     const char *asset;
     int excluded;
@@ -552,9 +646,32 @@ int graphics_texture_info(void *handle, uint32_t id, TextureInfo *info) {
     if (it == t.end())
         return 0;
     auto &v = it->second;
-    *info = TextureInfo{uint32_t(v.width), uint32_t(v.height), v.pixels.data(), v.pixels.size(),
-                        v.asset.c_str(),   v.excluded,         v.revision};
+    *info = TextureInfo{
+        uint32_t(v.width), uint32_t(v.height), v.has_pixels() ? size_t(v.width) * v.height * 4 : 0,
+        v.asset.c_str(),   v.excluded,         v.revision};
     return 1;
+}
+int graphics_texture_rgba(void *handle, uint32_t id, uint8_t *out, size_t bytes) {
+    try {
+        if (!handle)
+            return 0;
+        const auto &textures = static_cast<Graphics *>(handle)->textures;
+        auto it = textures.find(id);
+        if (it == textures.end())
+            return 0;
+        const auto &t = it->second;
+        size_t size = t.has_pixels() ? size_t(t.width) * t.height * 4 : 0;
+        if (bytes != size || (size && !out))
+            return 0;
+        const auto view = t.view();
+        for (size_t i = 0; i < size / 4; ++i) {
+            uint32_t pixel = texture_pixel(&view, i);
+            std::memcpy(out + i * 4, &pixel, 4);
+        }
+        return 1;
+    } catch (...) {
+        return 0;
+    }
 }
 uint32_t graphics_rectangles(void *handle, const Rectangle **out) {
     auto &r = static_cast<Graphics *>(handle)->rectangles;
@@ -576,13 +693,15 @@ uint32_t graphics_background(void *handle, uint32_t *texture, double *vertices) 
 uint32_t graphics_text_texture(void *handle, int width, int height, const uint8_t *pixels) {
     try {
         auto &g = *static_cast<Graphics *>(handle);
-        if (width <= 0 || height <= 0 || width > 4096 || height > 4096)
+        if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || !pixels)
             return 0;
         auto id = g.next_texture++;
         auto &t = g.textures[id];
         t.width = width;
         t.height = height;
+        t.clear_pixels();
         t.pixels.assign(pixels, pixels + size_t(width) * height * 4);
+        t.compact(4);
         t.params = {{0x2802, 33071}, {0x2803, 33071}};
         t.revision = ++g.revision;
         return id;
