@@ -59,12 +59,17 @@ function atlasId(f, family) {
 }
 function atlasById(id) { const a = atlasList.find((x) => x.id === id); return a ? a.f : null; }
 
-// pixel images (e.g. a game's frame): id -> { w, h, data (RGBA bytes), ver }. setImage() bumps ver;
+// pixel images (e.g. a game's frame): id -> { w, h, data (RGBA bytes), ver };
 // a frame records id + ver, so a changed picture is a changed frame, and the transport uploads it
 const imageById = new Map();
-function setImage(id, w, h, data) {
+function setImage(id, w, h, data, patches) {
     const im = imageById.get(id) || { ver: 0 };
-    im.w = w | 0; im.h = h | 0; im.data = data; im.ver = (im.ver + 1) >>> 0;
+    w |= 0; h |= 0;
+    const same = im.w === w && im.h === h && im.data === data;
+    // A slower renderer may still need the last changed frame's patches.
+    if (same && Array.isArray(patches) && !patches.length) return im;
+    im.patchBaseVer = im.ver; im.patches = same ? patches : null;
+    im.w = w; im.h = h; im.data = data; im.ver = (im.ver + 1) >>> 0;
     imageById.set(id, im);
     return im;
 }

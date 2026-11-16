@@ -23,7 +23,7 @@ class PacketReader {
                 chunk.copy(this.header, this.at, offset, offset + n); this.at += n; offset += n;
                 if (this.at !== 8) continue;
                 this.type = this.header.toString('ascii', 0, 4);
-                if (this.type !== 'FRM1' && this.type !== 'EVT1' && this.type !== 'TEX1') throw new Error('Unknown engine packet type');
+                if (this.type !== 'FRM1' && this.type !== 'FRM2' && this.type !== 'EVT1' && this.type !== 'TEX1') throw new Error('Unknown engine packet type');
                 const length = this.header.readUInt32LE(4);
                 if (length > MAX_PACKET) throw new Error('Invalid engine packet size');
                 if (this.frames && this.type === 'FRM1') {
@@ -163,11 +163,45 @@ class Engine {
                 else if (event.type === 'dialog' && this.onDialog) this.onDialog(event);
                 else if (event.type === 'scenery') Object.assign(this.scenery,event);
             } else {
-                if (body.length < 8) throw new Error('Short engine frame');
+                const incremental = type === 'FRM2';
+                if (!incremental && type !== 'FRM1') throw new Error('Unknown engine packet type');
+                if (body.length < (incremental ? 12 : 8)) throw new Error('Short engine frame');
                 const w = body.readUInt32LE(0), h = body.readUInt32LE(4);
-                if (!((w === 544 && h === 960) || (w === 408 && h === 720)) || body.length !== 8 + w*h*4) throw new Error('Invalid engine frame dimensions');
+                if (!((w === 544 && h === 960) || (w === 408 && h === 720))) throw new Error('Invalid engine frame dimensions');
+                let pixels, patches;
+                if (incremental) {
+                    const count = body.readUInt32LE(8);
+                    let offset = 12 + count*16;
+                    if (count > 64 || offset > body.length) throw new Error('Invalid engine frame regions');
+                    patches = [];
+                    for (let i=0; i<count; i++) {
+                        const at=12+i*16, x=body.readUInt32LE(at), y=body.readUInt32LE(at+4),
+                            width=body.readUInt32LE(at+8), height=body.readUInt32LE(at+12);
+                        if (!width || !height || x+width>w || y+height>h) throw new Error('Invalid engine frame region');
+                        const end=offset+width*height*4;
+                        if (end>body.length) throw new Error('Truncated engine frame region');
+                        patches.push({x,y,w:width,h:height,data:body.slice(offset,end)});
+                        offset=end;
+                    }
+                    if (offset!==body.length) throw new Error('Invalid engine frame length');
+                    let image=this.frameImage;
+                    if (!image || image.w!==w || image.h!==h) {
+                        if (count!==1 || patches[0].x || patches[0].y || patches[0].w!==w || patches[0].h!==h)
+                            throw new Error('Engine frame needs an initial key frame');
+                        image={w,h,data:Buffer.allocUnsafe(w*h*4)};
+                    }
+                    // Validate the whole packet before changing the published image.
+                    patches.forEach(r=>{
+                        for (let row=0; row<r.h; row++)
+                            r.data.copy(image.data,((r.y+row)*w+r.x)*4,row*r.w*4,(row+1)*r.w*4);
+                    });
+                    this.frameImage=image;pixels=image.data;
+                } else {
+                    if (body.length!==8+w*h*4) throw new Error('Invalid engine frame dimensions');
+                    this.frameImage=null;pixels=body.slice(8);
+                }
                 this.busy = false;
-                if (this.onFrame) this.onFrame(body.slice(8), w, h);
+                if (this.onFrame) this.onFrame(pixels, w, h, patches);
             }
     }
     fail(error) {

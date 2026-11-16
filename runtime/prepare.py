@@ -60,15 +60,15 @@ C
 cd /work
 cc -c -fPIC -O3 raster.c -o data/raster.o
 g++ -std=c++14 -shared -fPIC -O3 -pthread -static-libstdc++ -static-libgcc \
-    dispatch.cpp graphics.cpp audio.cpp data/raster.o -o bundle/native.so
+    dispatch.cpp graphics.cpp audio.cpp frame.cpp data/raster.o -o bundle/native.so
 strip --strip-unneeded bundle/native.so
 '''],check=True)
     library=(BUNDLE/'site-packages/unicorn/lib/libunicorn.so.2').read_bytes()
     assert library[:5]==b'\x7fELF\x02' and library[18:20]==b'\x3e\x00','Expected a Linux x86-64 library'
-    for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery','native_backend'):
+    for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery','native_backend','frame_encoder'):
         shutil.copy2(ROOT/f'{name}.py',BUNDLE)
     subprocess.run(['clang','-target','armv7-none-eabi','-c',str(ROOT/'arm_helpers.S'),'-o',str(ROOT/'arm_helpers.o')],check=True)
-    for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','graphics.cpp','audio.cpp','LICENSE'):
+    for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','graphics.cpp','audio.cpp','frame.cpp','LICENSE'):
         shutil.copy2(ROOT/name,BUNDLE)
     shutil.copy2(ROOT.parent/'NOTICE',BUNDLE/'NOTICE')
     shutil.copytree(ROOT/'licenses',BUNDLE/'licenses')

@@ -21,7 +21,7 @@ mgu.run({
         let frameTimer = null, nextFrameAt = lastFrame + 1000/60, sideWidth = Math.ceil((W-H*544/960)/2*960/H);
         const controls = new Controls(() => engine.playing);
         const world = new World();
-        engine.onFrame = (rgba, w, h) => { setImage(IMAGE, w, h, rgba); frames++; queueFrame(); };
+        engine.onFrame = (rgba, w, h, patches) => { setImage(IMAGE, w, h, rgba, patches); frames++; queueFrame(); };
         engine.onTexture = (id,w,h,rgba) => setImage(id,w,h,rgba);
         engine.onError = (e) => { error = e; sync(); menu(); };
         engine.onDialog = (request) => {

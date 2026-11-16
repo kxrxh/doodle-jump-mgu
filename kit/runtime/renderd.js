@@ -304,11 +304,28 @@ class RenderClient extends EventEmitter {
         if (previous && previous.ver===im.ver) return;
         if (this.native) {
             if (!this.info || !this.info.pixmaps || im.w>2048 || im.h>2048) throw new Error('Native renderer does not support this pixel image');
-            if (!previous || previous.w!==im.w || previous.h!==im.h) this._write(this._u32msg(X.PIXMAP,[id,im.w,im.h,1,0]));
-            const n=im.w*im.h*4,b=this._imageBuf(32+n);
-            b.writeUInt32LE(X.PIXELS,0);b.writeUInt32LE(24+n,4);
-            [id,1,0,0,im.w,im.h].forEach((v,i)=>b.writeUInt32LE(v,8+i*4));
-            Buffer.from(im.data.buffer,im.data.byteOffset,n).copy(b,32);
+            const resized=!previous || previous.w!==im.w || previous.h!==im.h;
+            if (resized) this._write(this._u32msg(X.PIXMAP,[id,im.w,im.h,1,0]));
+            const full=im.w*im.h*4;
+            let patches=!resized && previous.ver===im.patchBaseVer ? im.patches : null,n=0;
+            if (!Array.isArray(patches) || !patches.length || patches.length>64) patches=null;
+            if (patches) for (let i=0;i<patches.length;i++) {
+                const p=patches[i];
+                if (!p || !['x','y','w','h'].every(k=>Number.isInteger(p[k])) || p.x<0 || p.y<0 || p.w<=0 || p.h<=0 ||
+                    p.x+p.w>im.w || p.y+p.h>im.h || !Buffer.isBuffer(p.data) || p.data.length!==p.w*p.h*4 || n+p.data.length>full) {
+                    patches=null;break;
+                }
+                n+=p.data.length;
+            }
+            if (!patches) { n=full;patches=[{x:0,y:0,w:im.w,h:im.h,data:Buffer.from(im.data.buffer,im.data.byteOffset,n)}]; }
+            const b=this._imageBuf(16+patches.length*16+n);
+            b.writeUInt32LE(X.PIXELS,0);b.writeUInt32LE(b.length-8,4);
+            b.writeUInt32LE(id,8);b.writeUInt32LE(patches.length,12);
+            let offset=16+patches.length*16;
+            patches.forEach((p,i)=>{
+                [p.x,p.y,p.w,p.h].forEach((v,j)=>b.writeUInt32LE(v,16+i*16+j*4));
+                p.data.copy(b,offset);offset+=p.data.length;
+            });
             this._write(b);
             this.sent.image.set(id,{ver:im.ver,w:im.w,h:im.h});
             return;

@@ -1,6 +1,17 @@
 #include <math.h>
 #include <stdint.h>
 #include "texture.h"
+#ifdef __SSE2__
+#include <emmintrin.h>
+
+static inline __m128 rgba_float(const uint8_t *p) {
+    int32_t word;
+    memcpy(&word, p, sizeof(word));
+    __m128i bytes = _mm_cvtsi32_si128(word);
+    __m128i zero = _mm_setzero_si128();
+    return _mm_cvtepi32_ps(_mm_unpacklo_epi16(_mm_unpacklo_epi8(bytes, zero), zero));
+}
+#endif
 
 typedef struct { float x, y, u, v, r, g, b, a; } Vertex;
 
@@ -92,11 +103,19 @@ void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices,
                 eb < 0 || (eb == 0 && !top_left(c, a)) ||
                 ec < 0 || (ec == 0 && !top_left(a, b))) continue;
             float wa = ea / area, wb = eb / area, wc = ec / area;
+#ifdef __SSE2__
+            __m128 color4 = _mm_add_ps(_mm_add_ps(
+                _mm_mul_ps(_mm_loadu_ps(&a.r), _mm_set1_ps(wa)),
+                _mm_mul_ps(_mm_loadu_ps(&b.r), _mm_set1_ps(wb))),
+                _mm_mul_ps(_mm_loadu_ps(&c.r), _mm_set1_ps(wc)));
+            __m128 rgba4 = _mm_set1_ps(255);
+#else
             float color[4] = {a.r * wa + b.r * wb + c.r * wc,
                               a.g * wa + b.g * wb + c.g * wc,
                               a.b * wa + b.b * wb + c.b * wc,
                               a.a * wa + b.a * wb + c.a * wc};
             float rgba[4] = {255, 255, 255, 255};
+#endif
             if (texture && tw && th) {
                 float u = a.u * wa + b.u * wb + c.u * wc;
                 float v = a.v * wa + b.v * wb + c.v * wc;
@@ -111,10 +130,47 @@ void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices,
                     texel(iy + 1, th, repeat_t) * tw + texel(ix, tw, repeat_s),
                     texel(iy + 1, th, repeat_t) * tw + texel(ix + 1, tw, repeat_s)};
                 texture_addresses(texture, indices, samples, rgb);
+#ifdef __SSE2__
+                __m128 fx4 = _mm_set1_ps(fx), inv_x = _mm_set1_ps(1-fx);
+                __m128 top = _mm_add_ps(_mm_mul_ps(rgba_float(samples[0]), inv_x),
+                                        _mm_mul_ps(rgba_float(samples[1]), fx4));
+                __m128 bottom = _mm_add_ps(_mm_mul_ps(rgba_float(samples[2]), inv_x),
+                                           _mm_mul_ps(rgba_float(samples[3]), fx4));
+                rgba4 = _mm_add_ps(_mm_mul_ps(top, _mm_set1_ps(1-fy)),
+                                   _mm_mul_ps(bottom, _mm_set1_ps(fy)));
+#else
                 for (int k = 0; k < 4; k++)
                     rgba[k] = (samples[0][k] * (1-fx) + samples[1][k] * fx) * (1-fy) +
                               (samples[2][k] * (1-fx) + samples[3][k] * fx) * fy;
+#endif
             }
+#ifdef __SSE2__
+            if (replace == 2 && texture) {
+                __m128 alpha4 = _mm_shuffle_ps(color4, color4, _MM_SHUFFLE(3,3,3,3));
+                __m128 rgb = _mm_add_ps(_mm_mul_ps(_mm_mul_ps(color4, _mm_set1_ps(255)), alpha4),
+                    _mm_mul_ps(rgba4, _mm_sub_ps(_mm_set1_ps(1), alpha4)));
+                /* GL_DECAL changes RGB only. */
+                __m128 rgb_mask = _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, -1));
+                rgba4 = _mm_or_ps(_mm_and_ps(rgb_mask, rgb), _mm_andnot_ps(rgb_mask, rgba4));
+            } else if (!replace || !texture) {
+                rgba4 = _mm_mul_ps(rgba4, color4);
+            }
+            float alpha = _mm_cvtss_f32(_mm_shuffle_ps(rgba4, rgba4, _MM_SHUFFLE(3,3,3,3))) / 255;
+            float sf = blend ? factor(source, alpha) : 1;
+            float df = blend ? factor(destination, alpha) : 0;
+            uint8_t *pixel = out + (y * width + x) * 4;
+            __m128 destination4 = blend && destination == 768
+                ? _mm_div_ps(rgba4, _mm_set1_ps(255)) : _mm_set1_ps(df);
+            __m128 value = _mm_add_ps(_mm_mul_ps(rgba4, _mm_set1_ps(sf)),
+                                     _mm_mul_ps(rgba_float(pixel), destination4));
+            __m128 rounded = _mm_add_ps(value, _mm_set1_ps(.5f));
+            /* The second max operand keeps NaN mapped to zero. */
+            __m128 clipped = _mm_min_ps(_mm_max_ps(rounded, _mm_setzero_ps()), _mm_set1_ps(255));
+            __m128i words = _mm_cvttps_epi32(clipped);
+            __m128i shorts = _mm_packs_epi32(words, _mm_setzero_si128());
+            uint32_t packed = _mm_cvtsi128_si32(_mm_packus_epi16(shorts, _mm_setzero_si128()));
+            memcpy(pixel, &packed, sizeof(packed));
+#else
             if (replace == 2 && texture) {
                 for (int k = 0; k < 3; k++) rgba[k] = color[k] * 255 * color[3] + rgba[k] * (1 - color[3]);
             } else {
@@ -130,6 +186,7 @@ void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices,
                 /* GCC's fminf/fmaxf call libm for every channel on the MGU. */
                 pixel[k] = rounded >= 255 ? 255 : rounded > 0 ? (uint8_t)rounded : 0;
             }
+#endif
         }
     }
 }

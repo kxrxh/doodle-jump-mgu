@@ -107,6 +107,89 @@ test('native pixel images reuse a pixmap and keep touch claims with controller g
     assert.strictEqual(source[at+1],90,'software/upstream recording stays intact');
 });
 
+test('native image regions preserve coordinates, dense pixels and transport ownership', () => {
+    const g=new RenderClient('regions',{info(){},warn(){}}),writes=[];
+    g.native=true;g.ready=true;g.info={pixmaps:true};
+    g._write=(b)=>{writes.push(b);return true;};
+    const {setImage}=require('../runtime/record'),data=Buffer.from(Array.from({length:24},(_,i)=>i+1));
+    setImage(91,3,2,data);g._ensureImage(91);writes.length=0;
+    const patches=[{x:1,y:0,w:1,h:2,data:Buffer.from([41,42,43,44,45,46,47,48])},
+        {x:0,y:1,w:1,h:1,data:Buffer.from([51,52,53,54])}];
+    data.set([41,42,43,44],4);data.set([45,46,47,48],16);data.set([51,52,53,54],12);
+    setImage(91,3,2,data,patches);g._ensureImage(91);
+    assert.strictEqual(writes.length,1,'existing texture needs only one region upload');
+    const expected=Buffer.concat([u32(0x4d520004,52,91,2,1,0,1,2,0,1,1,1),
+        Buffer.from([41,42,43,44,45,46,47,48,51,52,53,54])]);
+    assert.deepStrictEqual(writes[0],expected);
+    patches[0].data.fill(0);patches[1].data.fill(0);
+    assert.deepStrictEqual(writes[0],expected,'socket transport owns its pixel bytes');
+    writes.length=0;
+    data.set([61,62,63,64],8);
+    setImage(91,3,2,data,[{x:2,y:0,w:1,h:1,data:Buffer.from([61,62,63,64])}]);g._ensureImage(91);
+    assert.deepStrictEqual(writes[0],Buffer.concat([u32(0x4d520004,28,91,1,2,0,1,1),Buffer.from([61,62,63,64])]));
+});
+
+test('unchanged image regions keep the pending changed image and skip uploads', () => {
+    const g=new RenderClient('unchanged',{info(){},warn(){}}),writes=[];
+    g.native=true;g.ready=true;g.info={pixmaps:true};g._write=(b)=>{writes.push(Buffer.from(b));return true;};
+    const {setImage}=require('../runtime/record'),data=Buffer.from([1,2,3,4,5,6,7,8]);
+    setImage(92,2,1,data,[]);g._ensureImage(92);writes.length=0;
+    const initial=setImage(92,2,1,data,[]).ver;
+    g._ensureImage(92);assert.strictEqual(writes.length,0,'initial unchanged image stays cached');
+    data.set([11,12,13,14],4);
+    const changed=setImage(92,2,1,data,[{x:1,y:0,w:1,h:1,data:Buffer.from([11,12,13,14])}]).ver;
+    assert.notStrictEqual(changed,initial);
+    for(let i=0;i<3;i++)assert.strictEqual(setImage(92,2,1,data,[]).ver,changed);
+    g._ensureImage(92);
+    assert.deepStrictEqual(writes[0],Buffer.concat([u32(0x4d520004,28,92,1,1,0,1,1),Buffer.from([11,12,13,14])]));
+    writes.length=0;setImage(92,2,1,data,[]);g._ensureImage(92);
+    assert.strictEqual(writes.length,0,'unchanged frames do not upload pixels');
+});
+
+test('skipped image updates, reconnects, resizes and replacement buffers upload the full image', () => {
+    const g=new RenderClient('fallback',{info(){},warn(){}}),writes=[];
+    g.native=true;g.ready=true;g.info={pixmaps:true};g._write=(b)=>{writes.push(Buffer.from(b));return true;};
+    const {setImage}=require('../runtime/record'),data=Buffer.from([1,2,3,4,5,6,7,8]);
+    setImage(93,2,1,data);g._ensureImage(93);writes.length=0;
+    data.set([11,12,13,14],0);setImage(93,2,1,data,[{x:0,y:0,w:1,h:1,data:Buffer.from([11,12,13,14])}]);
+    data.set([21,22,23,24],4);setImage(93,2,1,data,[{x:1,y:0,w:1,h:1,data:Buffer.from([21,22,23,24])}]);
+    g._ensureImage(93);
+    const full=Buffer.concat([u32(0x4d520004,32,93,1,0,0,2,1),Buffer.from([11,12,13,14,21,22,23,24])]);
+    assert.deepStrictEqual(writes[0],full,'a missed base version cannot apply only the last patch');
+    writes.length=0;g._reset();g._ensureImage(93);
+    assert.deepStrictEqual(writes.map(b=>b.readUInt32LE(0)),[0x4d520003,0x4d520004]);
+    assert.deepStrictEqual(writes[1],full,'a new connection needs the complete current image');
+    writes.length=0;setImage(93,1,2,data,[]);g._ensureImage(93);
+    assert.deepStrictEqual(writes[0],u32(0x4d520003,20,93,1,2,1,0));
+    assert.deepStrictEqual(writes[1],Buffer.concat([u32(0x4d520004,32,93,1,0,0,1,2),data]));
+    const replacement=Buffer.from([31,32,33,34,41,42,43,44]);
+    writes.length=0;setImage(93,1,2,replacement,[{x:0,y:1,w:1,h:1,data:replacement.slice(4)}]);g._ensureImage(93);
+    assert.deepStrictEqual(writes[0],Buffer.concat([u32(0x4d520004,32,93,1,0,0,1,2),replacement]));
+});
+
+test('legacy image transport keeps full images when callers supply regions', () => {
+    const g=new RenderClient('legacy',{info(){},warn(){}}),writes=[];
+    g.ready=true;g._write=(b)=>{writes.push(Buffer.from(b));return true;};
+    const {setImage}=require('../runtime/record'),data=Buffer.from([1,2,3,4,5,6,7,8]);
+    setImage(94,2,1,data);g._ensureImage(94);writes.length=0;
+    data.set([11,12,13,14],4);setImage(94,2,1,data,[{x:1,y:0,w:1,h:1,data:Buffer.from([11,12,13,14])}]);g._ensureImage(94);
+    assert.deepStrictEqual(writes[0],Buffer.concat([u32(9,20,94,2,1),data]));
+});
+
+test('invalid image regions fall back to complete cached pixels', () => {
+    const g=new RenderClient('invalid',{info(){},warn(){}}),writes=[];
+    g.native=true;g.ready=true;g.info={pixmaps:true};g._write=(b)=>{writes.push(Buffer.from(b));return true;};
+    const {setImage}=require('../runtime/record'),data=Buffer.from([1,2,3,4,5,6,7,8]);
+    setImage(95,2,1,data);g._ensureImage(95);
+    const patch={x:1,y:0,w:1,h:1,data:Buffer.from([5,6,7,8])};
+    for(const patches of [[Object.assign({},patch,{x:2})],[Object.assign({},patch,{x:-1})],
+            [Object.assign({},patch,{x:.5})],[Object.assign({},patch,{w:0})],
+            [Object.assign({},patch,{data:Buffer.alloc(3)})],new Array(2),new Array(65).fill(patch)]) {
+        writes.length=0;setImage(95,2,1,data,patches);g._ensureImage(95);
+        assert.deepStrictEqual(writes[0],Buffer.concat([u32(0x4d520004,32,95,1,0,0,2,1),data]));
+    }
+});
+
 test('explicit controller grab reaches the app with touch enabled; sheets keep their input', async () => {
     const t = await setup(), seen = [];
     try {

@@ -9,6 +9,7 @@ from game import Game, ORIGINAL
 from input_state import Input
 from audio import Audio
 from scenery import Scenery
+from frame_encoder import FrameEncoder
 
 
 def run(original, data):
@@ -25,6 +26,7 @@ def run(original, data):
         packet(b'TEX1',struct.pack('<III',identifier,image.width,image.height)+image.tobytes())
     try:
         game = Game(original, data, render_size=(408, 720))
+        encoder = FrameEncoder(game.graphics.width, game.graphics.height)
         audio = Audio(game.jni.assets)
         game.jni.audio = audio
         scenery=Scenery(game)
@@ -70,7 +72,7 @@ def run(original, data):
             if game.jni.playing != playing:
                 playing = game.jni.playing
                 event(dict(type='playing', value=playing))
-            packet(b'FRM1', struct.pack('<II', game.graphics.width, game.graphics.height), frame)
+            packet(b'FRM2', encoder.encode(frame))
     except BrokenPipeError:
         pass
     except BaseException as error:

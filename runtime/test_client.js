@@ -184,6 +184,64 @@ for(const size of [[408,960],[544,720],[0,0],[4096,4096]]) {
 }
 console.log('Logical and display-size frame boundaries: passed');
 
+function patchFrame(w,h,rectangles) {
+    const header=Buffer.alloc(12+rectangles.length*16);
+    header.writeUInt32LE(w,0);header.writeUInt32LE(h,4);header.writeUInt32LE(rectangles.length,8);
+    rectangles.forEach((r,i)=>[r.x,r.y,r.w,r.h].forEach((v,j)=>header.writeUInt32LE(v,12+i*16+j*4)));
+    return Buffer.concat([header].concat(rectangles.map(r=>r.data)));
+}
+const partial=new Engine('',{info(){},error(){}}),updates=[];
+partial.onFrame=(pixels,w,h,patches)=>updates.push({pixels:Buffer.from(pixels),live:pixels,w,h,patches});
+const key=patchFrame(408,720,[{x:0,y:0,w:408,h:720,data:Buffer.alloc(408*720*4,7)}]);
+assert.throws(()=>partial.packet('FRM2',patchFrame(408,720,[])),/frame|key|initial/i,'a partial stream starts with a complete frame');
+assert.throws(()=>partial.packet('FRM2',patchFrame(408,720,[{x:0,y:0,w:1,h:1,data:Buffer.alloc(4)}])),/key|initial/i);
+partial.busy=true;partial.packet('FRM2',key);
+assert.strictEqual(partial.busy,false);
+assert.deepStrictEqual(updates[0].pixels,Buffer.alloc(408*720*4,7));
+const changes=[{x:407,y:719,w:1,h:1,data:Buffer.from([8,9,10,11])},
+    {x:2,y:3,w:2,h:2,data:Buffer.from([12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27])}];
+const deltaPacket=patchFrame(408,720,changes);
+partial.packet('FRM2',deltaPacket);
+const expected=Buffer.alloc(408*720*4,7);
+expected.set([8,9,10,11],(719*408+407)*4);
+expected.set(changes[1].data.slice(0,8),(3*408+2)*4);
+expected.set(changes[1].data.slice(8),(4*408+2)*4);
+assert.deepStrictEqual(updates[1].pixels,expected,'nonzero origins and packed rows reconstruct the complete frame');
+assert.strictEqual(updates[1].live,updates[0].live,'partial frames reuse the separate complete image cache');
+assert.deepStrictEqual(updates[1].patches.map(r=>Array.from(r.data)),changes.map(r=>Array.from(r.data)));
+partial.packet('FRM2',patchFrame(408,720,[]));
+assert.deepStrictEqual(updates[2].pixels,expected);assert.deepStrictEqual(updates[2].patches,[]);
+const malformed=[deltaPacket.slice(0,-1),Buffer.concat([deltaPacket,Buffer.from([0])]),
+    patchFrame(408,720,[{x:408,y:0,w:1,h:1,data:Buffer.alloc(4)}]),
+    patchFrame(408,720,[{x:0,y:720,w:1,h:1,data:Buffer.alloc(4)}]),
+    patchFrame(408,720,[{x:0,y:0,w:0,h:1,data:Buffer.alloc(0)}]),
+    patchFrame(408,720,[{x:0,y:0,w:1,h:1,data:Buffer.from([99,98,97,96])},
+        {x:408,y:0,w:1,h:1,data:Buffer.alloc(4)}]),
+    patchFrame(544,960,[]),patchFrame(408,960,[])];
+const excessive=Buffer.alloc(12);excessive.writeUInt32LE(408,0);excessive.writeUInt32LE(720,4);excessive.writeUInt32LE(65,8);
+malformed.push(excessive);
+for(const body of malformed) {
+    partial.busy=true;
+    assert.throws(()=>partial.packet('FRM2',body),/frame|region|key/i);
+    assert.strictEqual(partial.busy,true,'invalid updates do not acknowledge an engine frame');
+    assert.deepStrictEqual(updates[2].live,expected,'invalid updates cannot modify published pixels');
+    assert.strictEqual(updates.length,3);
+}
+const resizingKey=patchFrame(544,960,[{x:0,y:0,w:544,h:960,data:Buffer.alloc(544*960*4,29)}]);
+partial.packet('FRM2',resizingKey);
+assert.deepStrictEqual(updates[3].pixels,Buffer.alloc(544*960*4,29));
+assert.notStrictEqual(updates[3].live,updates[2].live,'a new size gets its own complete image');
+const framedUpdates=[];
+const incremental=new PacketReader((type,body)=>framedUpdates.push([type,body]),true);
+const firstWire=wire('FRM2',deltaPacket);
+incremental.feed(firstWire.slice(0,31));assert.strictEqual(framedUpdates.length,0);
+incremental.feed(firstWire.slice(31));
+incremental.feed(wire('FRM2',patchFrame(408,720,[])));
+incremental.feed(wire('FRM2',patchFrame(408,720,changes.map(r=>Object.assign({},r,{data:Buffer.alloc(r.data.length,99)})))));
+assert.strictEqual(framedUpdates[0][0],'FRM2');
+assert.deepStrictEqual(framedUpdates[0][1],deltaPacket,'region payloads stay immutable across unchanged frames');
+console.log('Lossless region frame reconstruction and validation: passed');
+
 const childProcess=require('child_process'),EventEmitter=require('events');
 const savedSpawn=childProcess.spawn;
 const savedEnv={engine:process.env.DOODLE_ENGINE,python:process.env.DOODLE_PYTHON,path:process.env.PYTHONPATH};
