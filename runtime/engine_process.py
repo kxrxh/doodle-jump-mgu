@@ -14,15 +14,17 @@ from scenery import Scenery
 def run(original, data):
     output = sys.stdout.buffer
     sys.stdout = sys.stderr
-    def packet(kind, payload):
-        output.write(kind + struct.pack('<I', len(payload)) + payload)
+    def packet(kind, *parts):
+        output.write(kind + struct.pack('<I', sum(map(len, parts))))
+        for part in parts:
+            output.write(part)
         output.flush()
     def event(value):
         packet(b'EVT1', json.dumps(value, allow_nan=False).encode())
     def texture(identifier,image):
         packet(b'TEX1',struct.pack('<III',identifier,image.width,image.height)+image.tobytes())
     try:
-        game = Game(original, data)
+        game = Game(original, data, render_size=(408, 720))
         audio = Audio(game.jni.assets)
         game.jni.audio = audio
         scenery=Scenery(game)
@@ -57,7 +59,7 @@ def run(original, data):
             side_width=command.get('side_width',1008)
             if type(side_width) is not int or not 0<=side_width<=2048:
                 raise ValueError('Invalid panorama width')
-            image = game.step(tilt, touches, dt)
+            frame = game.step(tilt, touches, dt, readback=False)
             planes=scenery.paper(side_width)
             for identifier,plane in planes:
                 texture(identifier,plane)
@@ -68,7 +70,7 @@ def run(original, data):
             if game.jni.playing != playing:
                 playing = game.jni.playing
                 event(dict(type='playing', value=playing))
-            packet(b'FRM1', struct.pack('<II', image.width, image.height) + image.tobytes())
+            packet(b'FRM1', struct.pack('<II', game.graphics.width, game.graphics.height), frame)
     except BrokenPipeError:
         pass
     except BaseException as error:

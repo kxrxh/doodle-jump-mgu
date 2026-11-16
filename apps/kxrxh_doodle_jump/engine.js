@@ -11,7 +11,10 @@ const MAX_PACK_INDEX = 1 << 20;
 const MAX_PACK_ENTRY = 16 << 20;
 
 class PacketReader {
-    constructor(receive) { this.receive = receive; this.header = Buffer.alloc(8); this.at = 0; this.body = null; this.used = 0; }
+    constructor(receive, reuseFrames) {
+        this.receive = receive; this.header = Buffer.alloc(8); this.at = 0; this.body = null; this.used = 0;
+        this.frames = reuseFrames ? [null, null] : null; this.frameSlot = 0;
+    }
     feed(chunk) {
         let offset = 0;
         while (offset < chunk.length) {
@@ -23,13 +26,20 @@ class PacketReader {
                 if (this.type !== 'FRM1' && this.type !== 'EVT1' && this.type !== 'TEX1') throw new Error('Unknown engine packet type');
                 const length = this.header.readUInt32LE(4);
                 if (length > MAX_PACKET) throw new Error('Invalid engine packet size');
-                this.body = Buffer.alloc(length); this.used = 0;
+                if (this.frames && this.type === 'FRM1') {
+                    // Keep the published frame intact while its successor is assembled.
+                    let body = this.frames[this.frameSlot];
+                    if (!body || body.length !== length) body = this.frames[this.frameSlot] = Buffer.allocUnsafe(length);
+                    this.body = body;
+                } else this.body = Buffer.allocUnsafe(length);
+                this.used = 0;
             }
             const n = Math.min(this.body.length - this.used, chunk.length - offset);
             chunk.copy(this.body, this.used, offset, offset + n); this.used += n; offset += n;
             if (this.used === this.body.length) {
                 const type = this.type, body = this.body;
                 this.at = 0; this.body = null;
+                if (this.frames && type === 'FRM1') this.frameSlot ^= 1;
                 this.receive(type, body);
             }
         }
@@ -127,7 +137,7 @@ class Engine {
             PYTHONPATH: path.join(directory, 'site-packages'), PYTHONNOUSERSITE: '1', PYTHONDONTWRITEBYTECODE: '1',
         });
         const child = this.child = spawn(python, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'] });
-        const reader = new PacketReader((type, body) => this.packet(type,body));
+        const reader = new PacketReader((type, body) => this.packet(type,body), true);
         child.stdout.on('data', (chunk) => { try { reader.feed(chunk); } catch (e) { this.fail(e); } });
         let pending = '';
         child.stderr.on('data', (chunk) => {
@@ -155,7 +165,7 @@ class Engine {
             } else {
                 if (body.length < 8) throw new Error('Short engine frame');
                 const w = body.readUInt32LE(0), h = body.readUInt32LE(4);
-                if (w !== 544 || h !== 960 || body.length !== 8 + w*h*4) throw new Error('Invalid engine frame dimensions');
+                if (!((w === 544 && h === 960) || (w === 408 && h === 720)) || body.length !== 8 + w*h*4) throw new Error('Invalid engine frame dimensions');
                 this.busy = false;
                 if (this.onFrame) this.onFrame(body.slice(8), w, h);
             }

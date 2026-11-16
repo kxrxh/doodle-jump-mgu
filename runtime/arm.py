@@ -7,7 +7,7 @@ import subprocess
 import weakref
 
 from elftools.elf.elffile import ELFFile
-from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE
+from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_BLOCK
 from unicorn.arm_const import (
     UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
     UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_C1_C0_2,
@@ -25,6 +25,7 @@ SMALL_HEAP = 0x40000000
 SMALL_LIMIT = SMALL_HEAP + 0x1000000
 REGS = (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3)
 ENGINE_SHA256 = '4f92175d8ca5fcab546c0170803f80f7e7b37873b7c51241ef5a12c703fd8158'
+CALL_INSTRUCTION_LIMIT = 1_000_000_000
 
 
 class GuestApi(ctypes.Structure):
@@ -62,11 +63,15 @@ class Arm:
         self.depth = 0
         self._dispatch_errors = []
         self._native = native_library()
-        self._native.dispatch_create.argtypes = [ctypes.c_void_p, ctypes.POINTER(GuestApi), ctypes.c_int,
+        self._native.dispatch_create.argtypes = [ctypes.c_void_p, ctypes.POINTER(GuestApi), ctypes.c_int, ctypes.c_int,
             ctypes.c_uint64, ctypes.c_uint64, DispatchFallback, ctypes.c_void_p]
         self._native.dispatch_create.restype = ctypes.c_void_p
         self._native.dispatch_destroy.argtypes = [ctypes.c_void_p]
         self._native.dispatch_destroy.restype = None
+        self._native.dispatch_begin_call.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._native.dispatch_begin_call.restype = ctypes.c_int
+        self._native.dispatch_end_call.argtypes = [ctypes.c_void_p]
+        self._native.dispatch_end_call.restype = None
         self._native.dispatch_add.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int]
         self._native.dispatch_add.restype = ctypes.c_int
         self._native.dispatch_register.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p]
@@ -79,7 +84,7 @@ class Arm:
             ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop')),
             (ctypes.c_int * 7)(*REGS, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC))
         self._fallback = DispatchFallback(self._dispatch_fallback)
-        self.native = self._native.dispatch_create(self.uc._uch, ctypes.byref(api), UC_HOOK_CODE,
+        self.native = self._native.dispatch_create(self.uc._uch, ctypes.byref(api), UC_HOOK_CODE, UC_HOOK_BLOCK,
                                                    STUB, RETURN - 1, self._fallback, None)
         if not self.native:
             raise RuntimeError('Cannot create native ARM host dispatcher')
@@ -278,7 +283,11 @@ class Arm:
         self.depth += 1
         self._dispatch_errors.append(None)
         self._native.dispatch_clear_error(self.native)
+        began = False
         try:
+            if self._native.dispatch_begin_call(self.native, CALL_INSTRUCTION_LIMIT):
+                raise RuntimeError(self._native.dispatch_error(self.native).decode())
+            began = True
             stack = STACK + 0x7FE000 - self.depth * 0x10000
             self.uc.reg_write(UC_ARM_REG_SP, stack)
             for i, value in enumerate(arguments):
@@ -287,7 +296,7 @@ class Arm:
                 else:
                     self.put32(stack + (i - 4) * 4, value)
             self.uc.reg_write(UC_ARM_REG_LR, RETURN)
-            self.uc.emu_start(address, RETURN, count=1_000_000_000)
+            self.uc.emu_start(address, RETURN)
             if self._dispatch_errors[-1] is not None:
                 raise self._dispatch_errors[-1]
             error = self._native.dispatch_error(self.native)
@@ -300,6 +309,8 @@ class Arm:
             raise RuntimeError(f'ARM fault PC={self.uc.reg_read(UC_ARM_REG_PC):#x} '
                                f'LR={self.uc.reg_read(UC_ARM_REG_LR):#x}: {error}') from error
         finally:
+            if began:
+                self._native.dispatch_end_call(self.native)
             self._native.dispatch_clear_error(self.native)
             self._dispatch_errors.pop()
             self.depth -= 1

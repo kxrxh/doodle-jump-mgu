@@ -17,12 +17,12 @@ ORIGINAL = DIRECTORY / 'original' if (DIRECTORY / 'original').is_dir() else DIRE
 
 
 class Game:
-    def __init__(self, original=ORIGINAL, data=Path(__file__).resolve().parent / 'data'):
+    def __init__(self, original=ORIGINAL, data=Path(__file__).resolve().parent / 'data', render_size=None):
         self.machine = m = Arm(original / 'extracted/lib/armeabi-v7a/libDoodleJump.so')
         self.libc = LibC(m)
         m.initialize()
         self.jni = j = Jni(m, original / 'extracted/assets', data)
-        self.graphics = GLES(m, 544, 960)
+        self.graphics = GLES(m, 544, 960, render_size=render_size)
         self.png_decoder = PngDecoder(m, self.graphics.library)
         j.graphics = self.graphics
         self.touches = j.array(16 * 4, 4)
@@ -33,7 +33,7 @@ class Game:
             j.send(message)
         j.send(0, j.configuration())
 
-    def step(self, tilt=0.0, touches=(), dt=1/60):
+    def step(self, tilt=0.0, touches=(), dt=1/60, readback=True):
         if len(touches) > 16:
             raise ValueError('At most 16 touch events per original engine frame')
         self.libc.elapsed += dt
@@ -49,7 +49,7 @@ class Game:
         m.uc.mem_write(j.values[self.acceleration]['data'], struct.pack('<3f', -max(-1.0, min(1.0, tilt))*6, 0, 9.81))
         m.call(NATIVE + 'runGameLoopNative', j.env, j.center, len(touches), self.touches, 1, self.acceleration, 0, self.keys)
         self.frames += 1
-        return self.graphics.image()
+        return self.graphics.image() if readback else self.graphics.frame
 
 
 if __name__ == '__main__':

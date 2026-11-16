@@ -61,13 +61,14 @@ class Scenery:
         v=tl[3]*texture['height']/content[1]-top*dv
         color=tl[4:]
         def render(offset):
-            image=bytearray(width*g.height*4)
+            height=g.logical_height
+            image=bytearray(width*height*4)
             pointer=(ctypes.c_uint8*len(image)).from_buffer(image)
             corners=[(0,0,u+offset*du,v,*color),(width,0,u+(offset+width)*du,v,*color),
-                     (0,g.height,u+offset*du,v+g.height*dv,*color),
-                     (width,g.height,u+(offset+width)*du,v+g.height*dv,*color)]
+                     (0,height,u+offset*du,v+height*dv,*color),
+                     (width,height,u+(offset+width)*du,v+height*dv,*color)]
             triangles=[corners[i] for i in (0,1,2,2,1,3)]
             data=(ctypes.c_float*48)(*(number for vertex in triangles for number in vertex))
-            g.native(pointer,width,g.height,data,6,ctypes.c_char_p(pixels),content[0],content[1],1,1,1,0,1,0,0)
-            return Image.frombytes('RGBA',(width,g.height),bytes(image))
-        return [(2,render(-width)),(3,render(g.width))]
+            g.native(pointer,width,height,data,6,ctypes.c_char_p(pixels),content[0],content[1],1,1,1,0,1,0,0)
+            return Image.frombytes('RGBA',(width,height),bytes(image))
+        return [(2,render(-width)),(3,render(g.logical_width))]

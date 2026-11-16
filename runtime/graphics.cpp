@@ -129,6 +129,7 @@ struct Rectangle {
 };
 struct Graphics {
     int width, height;
+    int render_width, render_height;
     uint8_t *frame;
     std::array<int32_t, 4> viewport;
     std::map<uint32_t, std::vector<Matrix>> matrices{
@@ -154,7 +155,8 @@ struct Graphics {
     std::vector<Vertex> background;
     std::string cache_key;
     std::vector<uint8_t> cache;
-    Graphics(int w, int h, uint8_t *f) : width(w), height(h), frame(f), viewport{{0, 0, w, h}} {}
+    Graphics(int w, int h, uint8_t *f)
+        : width(w), height(h), render_width(w), render_height(h), frame(f), viewport{{0, 0, w, h}} {}
     Matrix &matrix() { return matrices.at(matrix_mode).back(); }
     static uint32_t limit(uint32_t n, uint32_t max, const char *message) {
         if (n > max)
@@ -325,21 +327,25 @@ struct Graphics {
         }
         std::vector<float> data;
         data.reserve(triangles.size() * 8);
-        for (const auto &v : triangles)
-            for (auto n : v)
-                data.push_back(n);
+        const double scale_x = double(render_width) / width, scale_y = double(render_height) / height;
+        for (const auto &v : triangles) {
+            data.push_back(v[0] * scale_x);
+            data.push_back(v[1] * scale_y);
+            for (size_t i = 2; i < v.size(); ++i)
+                data.push_back(v[i]);
+        }
         auto param = [&](uint32_t name, uint32_t fallback) {
             return tex && tex->params.count(name) ? tex->params.at(name) : fallback;
         };
         auto view = tex ? tex->view() : TextureView{};
-        raster_compact(frame, width, height, data.data(), triangles.size(),
+        raster_compact(frame, render_width, render_height, data.data(), triangles.size(),
                        tex && tex->has_pixels() ? &view : nullptr, tex ? tex->width : 0,
                        tex ? tex->height : 0, param(0x2800, 9729) == 9729,
                        param(0x2802, 10497) == 10497, param(0x2803, 10497) == 10497, enabled[0xbe2],
                        source, destination, replace);
         if (cached) {
             cache_key = std::move(key);
-            cache.assign(frame, frame + size_t(width) * height * 4);
+            cache.assign(frame, frame + size_t(render_width) * render_height * 4);
         }
         ++draws;
     }
@@ -478,7 +484,7 @@ struct Graphics {
                 std::array<uint8_t, 4> rgba;
                 for (int i = 0; i < 4; ++i)
                     rgba[i] = std::max(0.0, std::min(255.0, std::nearbyint(clear_color[i] * 255)));
-                for (size_t i = 0; i < size_t(width) * height; ++i)
+                for (size_t i = 0; i < size_t(render_width) * render_height; ++i)
                     std::copy(rgba.begin(), rgba.end(), frame + i * 4);
                 after_clear = true;
             }
@@ -607,6 +613,17 @@ void *graphics_create(int width, int height, uint8_t *frame) {
     }
 }
 void graphics_destroy(void *handle) { delete static_cast<Graphics *>(handle); }
+int graphics_render_target(void *handle, int width, int height, uint8_t *frame) {
+    if (!handle || width <= 0 || height <= 0 || width > 4096 || height > 4096 || !frame)
+        return 0;
+    auto &g = *static_cast<Graphics *>(handle);
+    g.render_width = width;
+    g.render_height = height;
+    g.frame = frame;
+    g.cache.clear();
+    g.cache_key.clear();
+    return 1;
+}
 int graphics_call(void *handle, NativeCall *call, NativeResult *result) {
     static_cast<Graphics *>(handle)->call(*call, *result);
     return 0;

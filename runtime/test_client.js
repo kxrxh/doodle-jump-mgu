@@ -8,7 +8,10 @@ const reader = new PacketReader((type, payload) => seen.push([type, Buffer.from(
 const data = Buffer.from([1, 2, 3, 255]);
 const packet = Buffer.alloc(12);
 packet.write('FRM1', 0); packet.writeUInt32LE(data.length, 4); data.copy(packet, 8);
-for (let i = 0; i < packet.length; i++) reader.feed(packet.slice(i, i + 1));
+for (let i = 0; i < packet.length; i++) {
+    reader.feed(packet.slice(i, i + 1));
+    if (i < packet.length - 1) assert.strictEqual(seen.length, 0, 'partial packet bytes stay private');
+}
 assert.strictEqual(seen.length, 1);
 assert.strictEqual(seen[0][0], 'FRM1');
 assert.deepStrictEqual(seen[0][1], data);
@@ -18,6 +21,35 @@ assert.throws(() => new PacketReader(() => {}).feed(invalid), /size/i);
 invalid.write('BAD1'); invalid.writeUInt32LE(0, 4);
 assert.throws(() => new PacketReader(() => {}).feed(invalid), /type/i);
 console.log('Original engine packet boundaries: passed');
+function wire(type, body) {
+    const header=Buffer.alloc(8);header.write(type);header.writeUInt32LE(body.length,4);
+    return Buffer.concat([header,body]);
+}
+const retained=[];
+const immutable=new PacketReader((type,body)=>retained.push(body));
+for(let value=1;value<=3;value++)immutable.feed(wire('FRM1',Buffer.alloc(16,value)));
+retained.forEach((body,index)=>assert.deepStrictEqual(body,Buffer.alloc(16,index+1),'default readers preserve completed bodies'));
+const recycled=[],persistent=[];
+const reusable=new PacketReader((type,body)=>(type==='FRM1'?recycled:persistent).push(body),true);
+reusable.feed(wire('FRM1',Buffer.alloc(16,1)));
+reusable.feed(wire('TEX1',Buffer.alloc(16,99)));
+reusable.feed(wire('EVT1',Buffer.alloc(16,88)));
+reusable.feed(wire('FRM1',Buffer.alloc(16,2)));
+const third=wire('FRM1',Buffer.alloc(16,3));
+reusable.feed(third.slice(0,12));
+assert.strictEqual(recycled.length,2,'a recycled buffer stays private until complete');
+assert.deepStrictEqual(recycled[1],Buffer.alloc(16,2),'the displayed frame survives a partial successor');
+reusable.feed(third.slice(12));
+assert.strictEqual(recycled[2],recycled[0],'the third frame reuses the first frame buffer');
+assert.deepStrictEqual(recycled[2],Buffer.alloc(16,3));
+reusable.feed(wire('FRM1',Buffer.alloc(16,4)));
+assert.strictEqual(recycled[3],recycled[1],'the fourth frame reuses the second frame buffer');
+reusable.feed(wire('FRM1',Buffer.alloc(24,5)));
+assert.notStrictEqual(recycled[4],recycled[2],'changed dimensions allocate a matching buffer');
+assert.deepStrictEqual(recycled[4],Buffer.alloc(24,5));
+assert.deepStrictEqual(recycled[3],Buffer.alloc(16,4),'a resized successor preserves the current frame');
+assert.deepStrictEqual(persistent,[Buffer.alloc(16,99),Buffer.alloc(16,88)],'textures and events never enter the frame buffers');
+console.log('Optional two-frame recycling and retained packet ownership: passed');
 const fs=require('fs'),path=require('path'),os=require('os'),zlib=require('zlib');
 const {unpack}=require('../apps/kxrxh_doodle_jump/engine');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-pack-'));
@@ -132,6 +164,25 @@ assert.deepStrictEqual(textures,[[2,1,1,[1,2,3,255]]]);
 tex.writeUInt32LE(1,0);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 tex.writeUInt32LE(2,0);tex.writeUInt32LE(4096,4);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 console.log('Scenery texture boundaries: passed');
+const frames=[];
+engine.onFrame=(pixels,w,h)=>frames.push([pixels.length,w,h,pixels[0],pixels[pixels.length-1]]);
+for(const size of [[544,960],[408,720]]) {
+    const w=size[0],h=size[1],body=Buffer.alloc(8+w*h*4,0xCD);
+    body.writeUInt32LE(w,0);body.writeUInt32LE(h,4);engine.busy=true;
+    engine.packet('FRM1',body);
+    assert.strictEqual(engine.busy,false,'complete frames release the next engine request');
+    assert.deepStrictEqual(frames[frames.length-1],[w*h*4,w,h,0xCD,0xCD]);
+    for(const malformed of [body.slice(0,-1),Buffer.concat([body,Buffer.from([0])])]) {
+        engine.busy=true;
+        assert.throws(()=>engine.packet('FRM1',malformed),/dimensions/i);
+        assert.strictEqual(engine.busy,true,'malformed frames must not release an in-flight request');
+    }
+}
+for(const size of [[408,960],[544,720],[0,0],[4096,4096]]) {
+    const body=Buffer.alloc(8);body.writeUInt32LE(size[0],0);body.writeUInt32LE(size[1],4);
+    assert.throws(()=>engine.packet('FRM1',body),/dimensions/i);
+}
+console.log('Logical and display-size frame boundaries: passed');
 
 const childProcess=require('child_process'),EventEmitter=require('events');
 const savedSpawn=childProcess.spawn;
@@ -143,17 +194,33 @@ try {
         launched={command,args,options};
         const child=new EventEmitter();
         child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();child.kill=()=>{};
+        launched.child=child;
         return child;
     };
     delete require.cache[require.resolve('../apps/kxrxh_doodle_jump/engine')];
     const LaunchEngine=require('../apps/kxrxh_doodle_jump/engine').Engine;
     process.env.DOODLE_ENGINE=local;delete process.env.DOODLE_PYTHON;process.env.PYTHONPATH='/unrelated/modules';
-    new LaunchEngine('/game-data',{info(){},error(){}}).start();
+    const launchedEngine=new LaunchEngine('/game-data',{info(){},error(){}});
+    launchedEngine.start();
     assert.strictEqual(launched.command,'/var/opt/mgu-python/current/bin/python3','uses the Store interpreter');
     assert.strictEqual(launched.options.env.PYTHONPATH,path.join(local,'site-packages'),'private dependencies reach Store Python');
     assert.strictEqual(launched.options.env.PYTHONNOUSERSITE,'1');
     assert.strictEqual(process.env.PYTHONPATH,'/unrelated/modules','launch does not change the parent environment');
     assert.deepStrictEqual(launched.args,[path.join(local,'engine_process.py'),'--data','/game-data/game']);
+    const delivered=[];
+    launchedEngine.onFrame=(pixels)=>delivered.push(pixels);
+    for(const size of [[408,720],[408,720],[408,720],[544,960],[408,720]]) {
+        const body=Buffer.alloc(8+size[0]*size[1]*4,delivered.length+1);
+        body.writeUInt32LE(size[0],0);body.writeUInt32LE(size[1],4);
+        launched.child.stdout.emit('data',wire('FRM1',body));
+    }
+    assert.strictEqual(delivered.length,5);
+    assert.strictEqual(delivered[2].buffer,delivered[0].buffer,'Engine.start enables frame recycling');
+    assert.strictEqual(delivered[2].byteOffset,delivered[0].byteOffset);
+    assert.strictEqual(delivered[3].length,544*960*4);
+    assert.strictEqual(delivered[3][0],4,'changing dimensions preserves the published large frame');
+    assert.strictEqual(delivered[4].length,408*720*4);
+    assert.strictEqual(delivered[4][delivered[4].length-1],5);
     process.env.DOODLE_PYTHON='/local/python';
     new LaunchEngine('/game-data',{info(){},error(){}}).start();
     assert.strictEqual(launched.command,'/local/python','local emulator interpreter override still works');

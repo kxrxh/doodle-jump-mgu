@@ -18,9 +18,10 @@ mgu.run({
         const engine = new Engine(ctx.dataDir, log);
         let error = null, frames = 0, going = false, dialog = null;
         let recorder = null, lastFrame = Date.now(), lastPaint = Date.now(), lastCcu = 0, touchSource = null, lastMenu = '';
+        let frameTimer = null, nextFrameAt = lastFrame + 1000/60, sideWidth = Math.ceil((W-H*544/960)/2*960/H);
         const controls = new Controls(() => engine.playing);
         const world = new World();
-        engine.onFrame = (rgba, w, h) => { setImage(IMAGE, w, h, rgba); frames++; };
+        engine.onFrame = (rgba, w, h) => { setImage(IMAGE, w, h, rgba); frames++; queueFrame(); };
         engine.onTexture = (id,w,h,rgba) => setImage(id,w,h,rgba);
         engine.onError = (e) => { error = e; sync(); menu(); };
         engine.onDialog = (request) => {
@@ -53,9 +54,28 @@ mgu.run({
                 ctx.controller.grab(go);
                 engine.send({ action: go ? 'resume' : 'pause' });
                 lastFrame = Date.now();
+                nextFrameAt = lastFrame + 1000/60;
+                if (go) queueFrame(); else cancelFrame();
                 if (!go && shown() && driving()) { log.info('car moving: original game paused'); ui.open('MAIN'); }
             }
             menu();
+        }
+        function cancelFrame() {
+            if (frameTimer !== null) { clearTimeout(frameTimer); frameTimer = null; }
+        }
+        function queueFrame() {
+            if (frameTimer !== null || !going || !engine.ready || engine.busy || engine.dead) return;
+            // A completed engine frame need not wait for the next renderer tick.
+            frameTimer = setTimeout(requestFrame, Math.max(0, nextFrameAt-Date.now()));
+        }
+        function requestFrame() {
+            frameTimer = null; sync();
+            if (!going || !engine.ready || engine.busy || engine.dead) return;
+            const now = Date.now(), dt = Math.min(.1, Math.max(1/120, (now-lastFrame)/1000));
+            if (engine.frame(Object.assign({ dt, side_width:sideWidth }, controls.take()))) {
+                lastFrame = now;
+                nextFrameAt = Math.max(nextFrameAt + 1000/60, now);
+            }
         }
         const controller = (v) => { if (going) controls.raw(v); else controls.observe(v); };
         ctx.controller.onInput((v) => { lastCcu = Date.now(); controller(v); });
@@ -78,9 +98,10 @@ mgu.run({
         ui.onClick('BTN_RIGHT', () => { if (going) controls.steer(1); });
         ['BTN_LEFT','BTN_SELECT','BTN_RIGHT','BTN_BACK'].forEach((id) => ctx.hideButton(id));
         if (ui.onFocus) ui.onFocus(sync);
-        setInterval(sync, 200);
-        process.on('exit', () => engine.stop());
-        ['SIGINT', 'SIGTERM'].forEach((signal) => process.on(signal, () => { engine.stop(); process.exit(0); }));
+        const syncTimer = setInterval(sync, 200);
+        function stop() { cancelFrame(); clearInterval(syncTimer); engine.stop(); }
+        process.on('exit', stop);
+        ['SIGINT', 'SIGTERM'].forEach((signal) => process.on(signal, () => { stop(); process.exit(0); }));
         function drawCursor(cv,w,h) {
             const cursor = engine.scenery.sprites.cursor;
             if (!frames || engine.playing || error || !cursor) return;
@@ -90,15 +111,14 @@ mgu.run({
         }
         ctx.loop('GAME', 60, () => {
             sync(); connectTouch();
-            const now = Date.now(), dt = Math.min(.1, Math.max(1/120, (now-lastFrame)/1000));
+            const now = Date.now();
             const paintDt = Math.min(.1,Math.max(0,(now-lastPaint)/1000));
             lastPaint = now;
             const cv = ctx.canvas(W, H).clear('#fff3e3'), p = cv.place;
             controls.place = p;
             const sw = p && p.full ? p.w : W, sh = p && p.full ? p.h : H;
-            const sideWidth = Math.max(0,Math.min(2048,Math.ceil((sw-sh*544/960)/2*960/sh)));
-            controls.move(dt);
-            if (going && engine.ready && !engine.busy && !engine.dead && engine.frame(Object.assign({ dt, side_width:sideWidth }, controls.take()))) lastFrame = now;
+            sideWidth = Math.max(0,Math.min(2048,Math.ceil((sw-sh*544/960)/2*960/sh)));
+            controls.move(paintDt); queueFrame();
             const message = error ? 'Engine stopped: ' + error.message : !frames ? 'Loading original Doodle Jump...' : null;
             if (p && p.full) {
                 if (!recorder || recorder.w !== p.w || recorder.h !== p.h) recorder = new Recorder(p.w, p.h);

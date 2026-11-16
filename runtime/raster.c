@@ -126,7 +126,9 @@ void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices,
             uint8_t *pixel = out + (y * width + x) * 4;
             for (int k = 0; k < 4; k++) {
                 float value = rgba[k] * sf + pixel[k] * (blend && destination == 768 ? rgba[k] / 255 : df);
-                pixel[k] = (uint8_t)fminf(255, fmaxf(0, value + 0.5f));
+                float rounded = value + 0.5f;
+                /* GCC's fminf/fmaxf call libm for every channel on the MGU. */
+                pixel[k] = rounded >= 255 ? 255 : rounded > 0 ? (uint8_t)rounded : 0;
             }
         }
     }

@@ -34,10 +34,13 @@ IMPORTS = (
 
 
 class GLES:
-    def __init__(self, machine, width, height):
+    def __init__(self, machine, width, height, render_size=None):
         self.m = machine
-        self.width, self.height = width, height
-        self.frame = bytearray(width * height * 4)
+        self.logical_width, self.logical_height = width, height
+        self.width, self.height = (width, height) if render_size is None else render_size
+        if any(not 0 < value <= 4096 for value in (width, height, self.width, self.height)):
+            raise ValueError('Invalid GLES framebuffer dimensions')
+        self.frame = bytearray(self.width * self.height * 4)
         self.frame_pointer = (ctypes.c_uint8 * len(self.frame)).from_buffer(self.frame)
         self.font = None
         self._asset_name = ''
@@ -47,6 +50,7 @@ class GLES:
         signatures = {
             'graphics_create': ([ctypes.c_int, ctypes.c_int, ctypes.c_void_p], ctypes.c_void_p),
             'graphics_destroy': ([ctypes.c_void_p], None),
+            'graphics_render_target': ([ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p], ctypes.c_int),
             'graphics_asset': ([ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int], None),
             'graphics_draws': ([ctypes.c_void_p], ctypes.c_uint64),
             'graphics_bound_texture': ([ctypes.c_void_p], ctypes.c_uint32),
@@ -67,6 +71,9 @@ class GLES:
         self._handle = lib.graphics_create(width, height, self.frame_pointer)
         if not self._handle:
             raise ValueError('Could not allocate native GLES renderer')
+        if not lib.graphics_render_target(self._handle, self.width, self.height, self.frame_pointer):
+            lib.graphics_destroy(self._handle)
+            raise ValueError('Could not bind native GLES framebuffer')
         # The native renderer holds this buffer until its context is destroyed.
         self._finalizer = weakref.finalize(self, lambda handle, frame: lib.graphics_destroy(handle), self._handle, self.frame_pointer)
         for name in IMPORTS:

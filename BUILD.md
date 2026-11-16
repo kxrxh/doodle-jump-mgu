@@ -35,6 +35,7 @@ python3 -m unittest discover -s tools -v
 .venv/bin/python -m unittest discover -s runtime -v
 node runtime/test_controls.js
 node runtime/test_client.js
+node runtime/test_pacing.js
 node runtime/test_world.js
 ```
 

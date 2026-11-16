@@ -3,6 +3,17 @@ import unittest
 from game import Game
 
 class SceneryTests(unittest.TestCase):
+    def test_smaller_game_frame_keeps_paper_in_original_coordinates(self):
+        from scenery import Scenery
+        import tempfile
+        with tempfile.TemporaryDirectory() as data:
+            game = Game(data=Path(data), render_size=(408, 720))
+            for _ in range(240):
+                game.step(readback=False)
+            planes = Scenery(game).paper(1008)
+            self.assertEqual([(identifier, image.size) for identifier, image in planes],
+                             [(2, (1008, 960)), (3, (1008, 960))])
+
     def test_original_art_is_published_once_and_paper_matches_game_scale(self):
         from scenery import Scenery
         import tempfile

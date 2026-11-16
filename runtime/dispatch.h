@@ -67,8 +67,10 @@ using NativeHandler = int (*)(void *, NativeCall *, NativeResult *);
 using DispatchFallback = int (*)(void *, uint64_t, NativeResult *);
 
 extern "C" {
-void *dispatch_create(void *, const GuestApi *, int, uint64_t, uint64_t, DispatchFallback, void *);
+void *dispatch_create(void *, const GuestApi *, int, int, uint64_t, uint64_t, DispatchFallback, void *);
 void dispatch_destroy(void *);
+int dispatch_begin_call(void *, uint64_t);
+void dispatch_end_call(void *);
 int dispatch_add(void *, uint64_t, const char *, int);
 int dispatch_register(void *, const char *, NativeHandler, void *);
 const char *dispatch_error(void *);

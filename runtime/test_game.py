@@ -2,11 +2,21 @@ import importlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from test_arm import LIBRARY
 
 
 class GameTests(unittest.TestCase):
+    def test_streamed_frame_uses_the_render_buffer_without_an_image_copy(self):
+        from game import Game
+        with tempfile.TemporaryDirectory() as data:
+            game = Game(LIBRARY.parents[3], Path(data), render_size=(408, 720))
+            with patch.object(game.graphics, 'image', side_effect=AssertionError('Image copy')):
+                frame = game.step(readback=False)
+            self.assertIs(frame, game.graphics.frame)
+            self.assertEqual(len(frame), 408 * 720 * 4)
+
     def test_original_engine_menu_gameplay_and_game_over(self):
         try:
             module = importlib.import_module('game')

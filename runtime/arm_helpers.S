@@ -139,6 +139,17 @@ strlen_native:
     sub r0,r0,#1
     bx lr
 
+.type wcslen_native,%function
+wcslen_native:
+    mov r1,r0
+1:  ldr r2,[r1],#4
+    cmp r2,#0
+    bne 1b
+    sub r0,r1,r0
+    lsr r0,r0,#2
+    sub r0,r0,#1
+    bx lr
+
 .type strcmp_native,%function
 strcmp_native:
 1:  ldrb r2,[r0],#1
