@@ -105,6 +105,7 @@ class GLES:
 
     @property
     def texture_storage_bytes(self):
+        """Private texture arrays and lookup tables, excluding shared PNG mappings."""
         return self.library.graphics_texture_storage_bytes(self._handle)
 
     @property

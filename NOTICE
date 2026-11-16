@@ -22,6 +22,12 @@ Pillow (MIT-CMU and included third-party notices), miniaudio (MIT), cffi and
 pycparser (MIT). Their original license files remain inside each installed package;
 mgu-python provides CPython's license files. The MGU toolkit retains its existing
 license notices. Unicorn runs on Linux x86-64 with only its ARM guest backend built.
+Its pinned 2.1.4 source is available at
+https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.2.1/unicorn-2.1.4.tar.gz
+(SHA-256: 00567a70e323f749b419cd86bee4f9115beab7ebba32194581c090cbb7c59cff).
+The local unicorn-write-protect.patch (2026-11-16) refreshes cached translations
+after a handled write-protection callback. The patch and prepare.py build recipe ship with the
+runtime and are also in https://github.com/kxrxh/doodle-jump-mgu/tree/main/runtime.
 The C++ backend statically links GCC libstdc++ and libgcc (GPL-3.0-or-later
 with GCC Runtime Library Exception 3.1); their notices and license are in
 the runtime licenses directory.

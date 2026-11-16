@@ -32,10 +32,12 @@ class PngDecoder:
         fmt,kind,bpp={2:(0x1908,0x8033,2),4:(0x1907,0x8363,2),6:(0x1909,0x1401,1),
                       7:(0x1906,0x1401,1),8:(0x190A,0x1401,2),13:(0x1908,0x8033,2)}.get(mode,(0x1908,0x1401,4))
         size=tw*th*bpp
-        output=ctypes.create_string_buffer(size)
         rgba=image.tobytes()
-        self.convert(output,ctypes.c_char_p(rgba),width,height,tw,mode)
-        pointer=m.malloc(size)
-        m.uc.mem_write(pointer,output.raw)
-        m.uc.mem_write(result,struct.pack('<9I',pointer,fmt,kind,bpp,size,width,height,tw,th))
+        pointer,output=m.image_malloc(size)
+        try:
+            self.convert(output,ctypes.c_char_p(rgba),width,height,tw,mode)
+            m.uc.mem_write(result,struct.pack('<9I',pointer,fmt,kind,bpp,size,width,height,tw,th))
+        except BaseException:
+            m.free(pointer)
+            raise
         return 1

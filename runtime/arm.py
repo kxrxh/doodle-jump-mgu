@@ -7,7 +7,7 @@ import subprocess
 import weakref
 
 from elftools.elf.elffile import ELFFile
-from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_BLOCK
+from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_BLOCK, UC_HOOK_MEM_WRITE_PROT
 from unicorn.arm_const import (
     UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
     UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_C1_C0_2,
@@ -23,6 +23,8 @@ RETURN = STUB + 0xFF000
 STACK = 0x70000000
 SMALL_HEAP = 0x40000000
 SMALL_LIMIT = SMALL_HEAP + 0x1000000
+IMAGE_HEAP = 0x50000000
+IMAGE_LIMIT = 0x60000000
 REGS = (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3)
 ENGINE_SHA256 = '4f92175d8ca5fcab546c0170803f80f7e7b37873b7c51241ef5a12c703fd8158'
 CALL_INSTRUCTION_LIMIT = 1_000_000_000
@@ -30,7 +32,8 @@ CALL_INSTRUCTION_LIMIT = 1_000_000_000
 
 class GuestApi(ctypes.Structure):
     _fields_ = [(name, ctypes.c_void_p) for name in
-                ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop')]
+                ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop',
+                 'mem_map_ptr', 'mem_unmap', 'mem_protect')]
     _fields_.append(('registers', ctypes.c_int * 7))
 
 
@@ -57,13 +60,16 @@ class Arm:
         self.heap = 0x20000000
         self.allocations = {}
         self.free_blocks = {}
+        self.image_heap = IMAGE_HEAP
+        self.image_allocations = {}
+        self.image_free_blocks = {}
         self.imports = {}
         self.handlers = {}
         self.hooks = {STUB+0xFE000:'malloc',STUB+0xFE004:'free'}
         self.depth = 0
         self._dispatch_errors = []
         self._native = native_library()
-        self._native.dispatch_create.argtypes = [ctypes.c_void_p, ctypes.POINTER(GuestApi), ctypes.c_int, ctypes.c_int,
+        self._native.dispatch_create.argtypes = [ctypes.c_void_p, ctypes.POINTER(GuestApi), ctypes.c_int, ctypes.c_int, ctypes.c_int,
             ctypes.c_uint64, ctypes.c_uint64, DispatchFallback, ctypes.c_void_p]
         self._native.dispatch_create.restype = ctypes.c_void_p
         self._native.dispatch_destroy.argtypes = [ctypes.c_void_p]
@@ -80,17 +86,32 @@ class Arm:
         self._native.dispatch_error.restype = ctypes.c_char_p
         self._native.dispatch_clear_error.argtypes = [ctypes.c_void_p]
         self._native.dispatch_clear_error.restype = None
+        self._native.dispatch_allocate_image.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_size_t]
+        self._native.dispatch_allocate_image.restype = ctypes.c_void_p
+        self._native.dispatch_release_image.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        self._native.dispatch_release_image.restype = ctypes.c_int
+        self._native.dispatch_before_write.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t]
+        self._native.dispatch_before_write.restype = ctypes.c_int
         api = GuestApi(*(ctypes.cast(getattr(uclib, 'uc_' + name), ctypes.c_void_p) for name in
-            ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop')),
+            ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop',
+             'mem_map_ptr', 'mem_unmap', 'mem_protect')),
             (ctypes.c_int * 7)(*REGS, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC))
         self._fallback = DispatchFallback(self._dispatch_fallback)
-        self.native = self._native.dispatch_create(self.uc._uch, ctypes.byref(api), UC_HOOK_CODE, UC_HOOK_BLOCK,
+        self.native = self._native.dispatch_create(self.uc._uch, ctypes.byref(api), UC_HOOK_CODE, UC_HOOK_BLOCK, UC_HOOK_MEM_WRITE_PROT,
                                                    STUB, RETURN - 1, self._fallback, None)
         if not self.native:
             raise RuntimeError('Cannot create native ARM host dispatcher')
         # Register after Unicorn's own finalizer so hooks are removed before uc_close.
         weakref.finalize(self.uc, self._native.dispatch_destroy, self.native)
         self.uc._native_dispatch_keepalive = (self._native, self._fallback)
+        write, native, context = self.uc.mem_write, self._native, self.native
+        def write_memory(address, data):
+            # Unicorn's host API bypasses guest page protection.
+            if address < IMAGE_LIMIT and address + len(data) > IMAGE_HEAP:
+                if native.dispatch_before_write(context, address, len(data)):
+                    raise RuntimeError(native.dispatch_error(context).decode())
+            write(address, data)
+        self.uc.mem_write = write_memory
         for address, name in self.hooks.items():
             self._map_import(address, name)
         self._libc_memory()
@@ -240,10 +261,36 @@ class Arm:
         if SMALL_HEAP<=address<SMALL_LIMIT:
             self.allocation_size(address)
             return self.call(self.native_imports['free'],address)
+        if address in self.image_allocations:
+            if self._native.dispatch_release_image(self.native, address):
+                raise RuntimeError(self._native.dispatch_error(self.native).decode())
+            size = self.image_allocations.pop(address)
+            self.allocations.pop(address)
+            self.image_free_blocks.setdefault(size, []).append(address)
+            return 0
         if address:
             size = self.allocations.pop(address)
             self.free_blocks.setdefault(size, []).append(address)
         return 0
+
+    def image_malloc(self, size):
+        if not 0 < size <= 64 * 1024 * 1024:
+            raise ValueError('Invalid decoded image size')
+        mapped = (size + 4095) & ~4095
+        blocks = self.image_free_blocks.get(mapped)
+        address = blocks[-1] if blocks else self.image_heap
+        if address + mapped > IMAGE_LIMIT:
+            raise MemoryError('Guest image heap exhausted')
+        pointer = self._native.dispatch_allocate_image(self.native, address, size)
+        if not pointer:
+            raise MemoryError(self._native.dispatch_error(self.native).decode())
+        if blocks:
+            blocks.pop()
+        else:
+            self.image_heap += mapped
+        self.image_allocations[address] = mapped
+        self.allocations[address] = mapped
+        return address, pointer
 
     def allocation_size(self, address):
         if SMALL_HEAP<=address<SMALL_LIMIT:

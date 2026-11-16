@@ -13,6 +13,19 @@ UNICORN_URL='https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.2.1/u
 UNICORN_SHA256='00567a70e323f749b419cd86bee4f9115beab7ebba32194581c090cbb7c59cff'
 
 
+def apply_unicorn_patch(source):
+    lines=(ROOT/'unicorn-write-protect.patch').read_text().splitlines(keepends=True)
+    if sum(line.startswith('@@ ') for line in lines)!=1:
+        raise ValueError('Expected one pinned Unicorn patch hunk')
+    before=''.join(line[1:] for line in lines[3:] if line.startswith((' ','-')))
+    after=''.join(line[1:] for line in lines[3:] if line.startswith((' ','+')))
+    target=source/'unicorn-2.1.4/src/qemu/accel/tcg/cputlb.c'
+    text=target.read_text()
+    if not before or text.count(before)!=1:
+        raise ValueError('Unicorn write-protection patch does not match the pinned source')
+    target.write_text(text.replace(before,after,1))
+
+
 def main():
     sys.path.insert(0,str(ROOT.parent/'tools'))
     from store_build import download
@@ -22,6 +35,7 @@ def main():
     shutil.rmtree(ROOT/'data/unicorn-build',ignore_errors=True)
     source.mkdir(parents=True)
     with tarfile.open(archive) as package:package.extractall(source,filter='data')
+    apply_unicorn_patch(source)
     shutil.rmtree(BUNDLE,ignore_errors=True)
     BUNDLE.mkdir()
     subprocess.run([sys.executable,'-m','pip','install','--no-compile','--only-binary=:all:',
@@ -60,7 +74,7 @@ C
 cd /work
 cc -c -fPIC -O3 raster.c -o data/raster.o
 g++ -std=c++14 -shared -fPIC -O3 -pthread -static-libstdc++ -static-libgcc \
-    dispatch.cpp graphics.cpp audio.cpp frame.cpp data/raster.o -o bundle/native.so
+    dispatch.cpp image_memory.cpp graphics.cpp audio.cpp frame.cpp raster_parallel.cpp data/raster.o -o bundle/native.so
 strip --strip-unneeded bundle/native.so
 '''],check=True)
     library=(BUNDLE/'site-packages/unicorn/lib/libunicorn.so.2').read_bytes()
@@ -68,7 +82,7 @@ strip --strip-unneeded bundle/native.so
     for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery','native_backend','frame_encoder'):
         shutil.copy2(ROOT/f'{name}.py',BUNDLE)
     subprocess.run(['clang','-target','armv7-none-eabi','-c',str(ROOT/'arm_helpers.S'),'-o',str(ROOT/'arm_helpers.o')],check=True)
-    for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','graphics.cpp','audio.cpp','frame.cpp','LICENSE'):
+    for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','image_memory.cpp','image_memory.h','graphics.cpp','audio.cpp','frame.cpp','raster_parallel.cpp','prepare.py','unicorn-write-protect.patch','LICENSE'):
         shutil.copy2(ROOT/name,BUNDLE)
     shutil.copy2(ROOT.parent/'NOTICE',BUNDLE/'NOTICE')
     shutil.copytree(ROOT/'licenses',BUNDLE/'licenses')

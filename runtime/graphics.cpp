@@ -1,5 +1,6 @@
 #include "dispatch.h"
 #include "texture.h"
+#include "image_memory.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -7,12 +8,13 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-extern "C" void raster_compact(uint8_t *, int, int, const float *, int, const TextureView *, int,
+extern "C" void raster_parallel(uint8_t *, int, int, const float *, int, const TextureView *, int,
                                int, int, int, int, int, int, int, int);
 namespace {
 std::atomic<uint64_t> lookup_storage{0};
@@ -60,18 +62,21 @@ struct Texture {
     int width = 0, height = 0, excluded = 0;
     uint64_t revision = 0;
     std::vector<uint8_t> pixels;
+    ImageSlice shared;
     std::vector<uint32_t> palette;
     const uint32_t *shared_palette = nullptr;
     int format = TEXTURE_RGBA8;
     std::string asset;
     std::map<uint32_t, uint32_t> params;
     TextureView view() const {
-        return {pixels.data(), palette.empty() ? shared_palette : palette.data(), format};
+        return {shared.pixels ? shared.pixels->data() + shared.offset : pixels.data(),
+                palette.empty() ? shared_palette : palette.data(), format};
     }
-    bool has_pixels() const { return !pixels.empty() || !palette.empty(); }
+    bool has_pixels() const { return shared.pixels || !pixels.empty() || !palette.empty(); }
     void clear_pixels() {
         std::vector<uint8_t>().swap(pixels);
         std::vector<uint32_t>().swap(palette);
+        shared = {};
         shared_palette = nullptr;
         format = TEXTURE_RGBA8;
     }
@@ -338,7 +343,7 @@ struct Graphics {
             return tex && tex->params.count(name) ? tex->params.at(name) : fallback;
         };
         auto view = tex ? tex->view() : TextureView{};
-        raster_compact(frame, render_width, render_height, data.data(), triangles.size(),
+        raster_parallel(frame, render_width, render_height, data.data(), triangles.size(),
                        tex && tex->has_pixels() ? &view : nullptr, tex ? tex->width : 0,
                        tex ? tex->height : 0, param(0x2800, 9729) == 9729,
                        param(0x2802, 10497) == 10497, param(0x2803, 10497) == 10497, enabled[0xbe2],
@@ -394,7 +399,11 @@ struct Graphics {
                                                 : lookup<0x8034, 65536>();
         } else
             throw std::runtime_error("Unsupported GLES texture type");
-        t.pixels = read(call, 0, pointer, size_t(w) * h * channels);
+        const size_t size = size_t(w) * h * channels;
+        t.shared = call.images->snapshot(pointer, size);
+        if (t.shared.pixels)
+            return;
+        t.pixels = read(call, 0, pointer, size);
         t.compact(channels);
     }
     void call(NativeCall &c, NativeResult &result) {
@@ -638,9 +647,12 @@ uint32_t graphics_bound_texture(void *handle) { return static_cast<Graphics *>(h
 uint64_t graphics_revision(void *handle) { return static_cast<Graphics *>(handle)->revision; }
 uint64_t graphics_texture_storage_bytes(void *handle) {
     uint64_t bytes = lookup_storage;
+    std::set<const PixelSnapshot *> counted;
     for (const auto &entry : static_cast<Graphics *>(handle)->textures) {
         const auto &texture = entry.second;
         bytes += texture.pixels.capacity() + texture.palette.capacity() * sizeof(uint32_t);
+        if (texture.shared.pixels && counted.insert(texture.shared.pixels.get()).second)
+            bytes += texture.shared.pixels->owned_bytes();
     }
     return bytes;
 }

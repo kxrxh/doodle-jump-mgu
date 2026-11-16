@@ -14,6 +14,9 @@ struct GuestApi {
     int (*hook_add)(void *, size_t *, int, void *, void *, uint64_t, uint64_t, ...);
     int (*hook_del)(void *, size_t);
     int (*emu_stop)(void *);
+    int (*mem_map_ptr)(void *, uint64_t, size_t, uint32_t, void *);
+    int (*mem_unmap)(void *, uint64_t, size_t);
+    int (*mem_protect)(void *, uint64_t, size_t, uint32_t);
     int registers[7]; // r0-r3, sp, lr, pc
 };
 
@@ -22,10 +25,13 @@ struct NativeResult {
     uint32_t flags = 0; // bit 0 writes r0; bit 1 writes r1
 };
 
+class ImageMemory;
+
 struct NativeCall {
     void *uc;
     const GuestApi *api;
     const char *name;
+    ImageMemory *images;
     uint32_t values[5] = {};
     unsigned loaded = 0;
 
@@ -43,10 +49,7 @@ struct NativeCall {
         if (size)
             check(api->mem_read(uc, address, output, size));
     }
-    void write(uint64_t address, const void *data, size_t size) const {
-        if (size)
-            check(api->mem_write(uc, address, data, size));
-    }
+    void write(uint64_t address, const void *data, size_t size) const;
     uint32_t argument(unsigned index) {
         if (index > 1024)
             throw std::runtime_error("Invalid guest argument index");
@@ -67,7 +70,7 @@ using NativeHandler = int (*)(void *, NativeCall *, NativeResult *);
 using DispatchFallback = int (*)(void *, uint64_t, NativeResult *);
 
 extern "C" {
-void *dispatch_create(void *, const GuestApi *, int, int, uint64_t, uint64_t, DispatchFallback, void *);
+void *dispatch_create(void *, const GuestApi *, int, int, int, uint64_t, uint64_t, DispatchFallback, void *);
 void dispatch_destroy(void *);
 int dispatch_begin_call(void *, uint64_t);
 void dispatch_end_call(void *);
@@ -75,4 +78,7 @@ int dispatch_add(void *, uint64_t, const char *, int);
 int dispatch_register(void *, const char *, NativeHandler, void *);
 const char *dispatch_error(void *);
 void dispatch_clear_error(void *);
+void *dispatch_allocate_image(void *, uint32_t, size_t);
+int dispatch_release_image(void *, uint32_t);
+int dispatch_before_write(void *, uint64_t, size_t);
 }

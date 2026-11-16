@@ -79,9 +79,9 @@ static inline void texture_addresses(const TextureView *texture, const int *indi
 #undef ADDRESSES
 }
 
-void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices, int count,
+void raster_compact_rows(uint8_t *out, int width, int height, const Vertex *vertices, int count,
             const TextureView *texture, int tw, int th, int linear, int repeat_s, int repeat_t,
-            int blend, int source, int destination, int replace) {
+            int blend, int source, int destination, int replace, int clip_y0, int clip_y1) {
     for (int n = 0; n + 2 < count; n += 3) {
         Vertex a = vertices[n], b = vertices[n + 1], c = vertices[n + 2];
         float area = edge(a, b, c.x, c.y);
@@ -95,6 +95,8 @@ void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices,
         if (y0 < 0) y0 = 0;
         if (x1 > width) x1 = width;
         if (y1 > height) y1 = height;
+        if (y0 < clip_y0) y0 = clip_y0;
+        if (y1 > clip_y1) y1 = clip_y1;
         for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
             float ea = edge(b, c, x + 0.5f, y + 0.5f);
             float eb = edge(c, a, x + 0.5f, y + 0.5f);
@@ -189,6 +191,13 @@ void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices,
 #endif
         }
     }
+}
+
+void raster_compact(uint8_t *out, int width, int height, const Vertex *vertices, int count,
+            const TextureView *texture, int tw, int th, int linear, int repeat_s, int repeat_t,
+            int blend, int source, int destination, int replace) {
+    raster_compact_rows(out, width, height, vertices, count, texture, tw, th, linear,
+                        repeat_s, repeat_t, blend, source, destination, replace, 0, height);
 }
 
 /* Scenery passes decoded RGBA snapshots through this existing ABI. */

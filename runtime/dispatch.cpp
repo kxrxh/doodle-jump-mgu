@@ -1,10 +1,18 @@
 #include "dispatch.h"
+#include "image_memory.h"
 
 #include <cmath>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <vector>
+
+void NativeCall::write(uint64_t address, const void *data, size_t size) const {
+    if (size) {
+        images->before_write(address, size);
+        check(api->mem_write(uc, address, data, size));
+    }
+}
 
 namespace {
 struct Binding {
@@ -15,6 +23,7 @@ struct Binding {
 struct Dispatch {
     void *uc;
     GuestApi api;
+    ImageMemory images;
     int hook_type;
     DispatchFallback fallback;
     void *context;
@@ -25,7 +34,7 @@ struct Dispatch {
     std::string error;
 
     Dispatch(void *engine, const GuestApi &functions, int type, DispatchFallback python, void *user)
-        : uc(engine), api(functions), hook_type(type), fallback(python), context(user) {}
+        : uc(engine), api(functions), images(engine, api), hook_type(type), fallback(python), context(user) {}
     ~Dispatch() {
         for (size_t hook : hooks)
             api.hook_del(uc, hook);
@@ -72,7 +81,7 @@ void callback(void *uc, uint64_t address, uint32_t, void *context) noexcept {
         const auto name = dispatch.names.find(address);
         if (name == dispatch.names.end())
             throw std::runtime_error("Unknown host call address");
-        NativeCall call{uc, &dispatch.api, name->second.c_str()};
+        NativeCall call{uc, &dispatch.api, name->second.c_str(), &dispatch.images};
         NativeResult result;
         auto handler = dispatch.handlers.find(name->second);
         const int status = handler == dispatch.handlers.end()
@@ -114,6 +123,20 @@ void budget_callback(void *uc, uint64_t, uint32_t size, void *context) noexcept 
     }
 }
 
+bool image_write_callback(void *uc, int, uint64_t address, int size, int64_t, void *context) noexcept {
+    auto &dispatch = *static_cast<Dispatch *>(context);
+    try {
+        if (dispatch.error.empty() && size > 0)
+            return dispatch.images.before_write(address, size);
+    } catch (const std::exception &error) {
+        dispatch.error = error.what();
+    } catch (...) {
+        dispatch.error = "Unknown PNG copy-on-write error";
+    }
+    dispatch.api.emu_stop(uc);
+    return false;
+}
+
 void Dispatch::hook(uint64_t begin, uint64_t end, int type, void *handler) {
     size_t handle = 0;
     const int status =
@@ -130,12 +153,13 @@ void Dispatch::hook(uint64_t begin, uint64_t end, int type, void *handler) {
 }
 } // namespace
 
-extern "C" void *dispatch_create(void *uc, const GuestApi *api, int type, int block_type, uint64_t begin,
+extern "C" void *dispatch_create(void *uc, const GuestApi *api, int type, int block_type, int write_type, uint64_t begin,
                                  uint64_t end, DispatchFallback fallback, void *context) {
     try {
         auto dispatch = std::unique_ptr<Dispatch>(new Dispatch(uc, *api, type, fallback, context));
         dispatch->hook(begin, end);
         dispatch->hook(1, 0, block_type, reinterpret_cast<void *>(budget_callback));
+        dispatch->hook(0x50000000, 0x5fffffff, write_type, reinterpret_cast<void *>(image_write_callback));
         for (const char *name : {"pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_init",
                                  "pthread_mutex_destroy"})
             dispatch->handlers.emplace(name, Binding{zero, nullptr});
@@ -195,4 +219,42 @@ extern "C" const char *dispatch_error(void *context) {
 
 extern "C" void dispatch_clear_error(void *context) {
     static_cast<Dispatch *>(context)->error.clear();
+}
+
+extern "C" void *dispatch_allocate_image(void *context, uint32_t address, size_t size) {
+    auto &dispatch = *static_cast<Dispatch *>(context);
+    try {
+        return dispatch.images.allocate(address, size);
+    } catch (const std::exception &error) {
+        dispatch.error = error.what();
+    } catch (...) {
+        dispatch.error = "Unknown PNG allocation error";
+    }
+    return nullptr;
+}
+
+extern "C" int dispatch_release_image(void *context, uint32_t address) {
+    auto &dispatch = *static_cast<Dispatch *>(context);
+    try {
+        dispatch.images.release(address);
+        return 0;
+    } catch (const std::exception &error) {
+        dispatch.error = error.what();
+    } catch (...) {
+        dispatch.error = "Unknown PNG release error";
+    }
+    return 1;
+}
+
+extern "C" int dispatch_before_write(void *context, uint64_t address, size_t size) {
+    auto &dispatch = *static_cast<Dispatch *>(context);
+    try {
+        dispatch.images.before_write(address, size);
+        return 0;
+    } catch (const std::exception &error) {
+        dispatch.error = error.what();
+    } catch (...) {
+        dispatch.error = "Unknown PNG copy-on-write error";
+    }
+    return 1;
 }
