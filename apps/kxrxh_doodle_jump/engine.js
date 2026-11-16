@@ -26,11 +26,12 @@ class PacketReader {
                 if (this.type !== 'FRM1' && this.type !== 'FRM2' && this.type !== 'EVT1' && this.type !== 'TEX1') throw new Error('Unknown engine packet type');
                 const length = this.header.readUInt32LE(4);
                 if (length > MAX_PACKET) throw new Error('Invalid engine packet size');
-                if (this.frames && this.type === 'FRM1') {
-                    // Keep the published frame intact while its successor is assembled.
+                this.reuse = this.frames && (this.type === 'FRM1' || (this.type === 'FRM2' && length > 12));
+                if (this.reuse) {
+                    // Empty FRM2 updates keep the last changed patches borrowed until their successor arrives.
                     let body = this.frames[this.frameSlot];
-                    if (!body || body.length !== length) body = this.frames[this.frameSlot] = Buffer.allocUnsafe(length);
-                    this.body = body;
+                    if (!body || body.length < length) body = this.frames[this.frameSlot] = Buffer.allocUnsafe(length);
+                    this.body = body.length === length ? body : body.slice(0, length);
                 } else this.body = Buffer.allocUnsafe(length);
                 this.used = 0;
             }
@@ -39,7 +40,7 @@ class PacketReader {
             if (this.used === this.body.length) {
                 const type = this.type, body = this.body;
                 this.at = 0; this.body = null;
-                if (this.frames && type === 'FRM1') this.frameSlot ^= 1;
+                if (this.reuse) this.frameSlot ^= 1;
                 this.receive(type, body);
             }
         }
@@ -135,6 +136,8 @@ class Engine {
         if (!process.env.DOODLE_ENGINE) args.push('--original', path.join(directory, 'original'));
         const env = Object.assign({}, process.env, {
             PYTHONPATH: path.join(directory, 'site-packages'), PYTHONNOUSERSITE: '1', PYTHONDONTWRITEBYTECODE: '1',
+            // Bound glibc's retained heap after large image and audio temporaries are freed.
+            MALLOC_MMAP_THRESHOLD_: '1048576',
         });
         const child = this.child = spawn(python, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'] });
         const reader = new PacketReader((type, body) => this.packet(type,body), true);

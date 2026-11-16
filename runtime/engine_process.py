@@ -67,6 +67,7 @@ def run(original, data):
                 texture(identifier,plane)
             if planes:
                 event(dict(type='scenery',paperWidth=side_width))
+                del planes, plane
             while game.jni.dialogs:
                 event(game.jni.dialogs.pop(0))
             if game.jni.playing != playing:

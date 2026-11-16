@@ -176,6 +176,19 @@ test('legacy image transport keeps full images when callers supply regions', () 
     assert.deepStrictEqual(writes[0],Buffer.concat([u32(9,20,94,2,1),data]));
 });
 
+test('queued socket uploads keep their pixels while later frames reuse source buffers', () => {
+    const g=new RenderClient('queued',{info(){},warn(){}}),pending=[];
+    g.native=true;g.ready=true;g.connected=true;g.info={pixmaps:true};
+    g.sock={bufferSize:0,write(b){pending.push([b,Buffer.from(b)]);this.bufferSize+=b.length;return false;}};
+    const {setImage}=require('../runtime/record'),data=Buffer.alloc(256*128*4,1);
+    setImage(96,256,128,data);g._ensureImage(96);
+    for(let value=2;value<=5;value++) {
+        data.fill(value);
+        setImage(96,256,128,data,[{x:0,y:0,w:256,h:128,data}]);g._ensureImage(96);
+        pending.forEach(([borrowed,expected])=>assert.deepStrictEqual(borrowed,expected));
+    }
+});
+
 test('invalid image regions fall back to complete cached pixels', () => {
     const g=new RenderClient('invalid',{info(){},warn(){}}),writes=[];
     g.native=true;g.ready=true;g.info={pixmaps:true};g._write=(b)=>{writes.push(Buffer.from(b));return true;};
