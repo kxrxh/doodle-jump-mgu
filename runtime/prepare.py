@@ -68,8 +68,9 @@ strip --strip-unneeded bundle/native.so
     for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery','native_backend'):
         shutil.copy2(ROOT/f'{name}.py',BUNDLE)
     subprocess.run(['clang','-target','armv7-none-eabi','-c',str(ROOT/'arm_helpers.S'),'-o',str(ROOT/'arm_helpers.o')],check=True)
-    for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','graphics.cpp','audio.cpp','LICENSE','NOTICE'):
+    for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','graphics.cpp','audio.cpp','LICENSE'):
         shutil.copy2(ROOT/name,BUNDLE)
+    shutil.copy2(ROOT.parent/'NOTICE',BUNDLE/'NOTICE')
     shutil.copytree(ROOT/'licenses',BUNDLE/'licenses')
     (BUNDLE/'arm_helpers.o').touch()
     (BUNDLE/'native.so').touch()

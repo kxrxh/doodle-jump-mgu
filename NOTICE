@@ -12,7 +12,8 @@ Engine SHA-256: 4f92175d8ca5fcab546c0170803f80f7e7b37873b7c51241ef5a12c703fd8158
 The Android message adapter follows the MIT-licensed doodlejump-vita port:
 https://github.com/RONIN0095/doodlejump-vita
 Revision: 96ce1f488f1aa289d87a07627df70c51fe94dae5
-See LICENSE for its required copyright and permission notice.
+See runtime/LICENSE (shipped as LICENSE in the engine runtime) for its required
+copyright and permission notice.
 
 The host uses mgu-store's CPython 3.12 (Python Software Foundation License).
 Its private runtime includes Unicorn
@@ -39,8 +40,7 @@ icon and cursor are separate new assets. Shipping PNG files retain their creatio
 
 MGU toolkit: https://github.com/cauliflowermossgrape/idrive7-apps
 Revision: cca7f9ad17f96b92e60a89ea98686afe1b662041
-See kit/LICENSE and kit/LICENSE.mgu-renderd. The controller gate and its
-source retain their upstream notices in native/inputgate/.
+See kit/LICENSE and kit/LICENSE.mgu-renderd.
 
 Source builds download and verify the original APK and game assets. Ready app
 packages include those verified files; the source repository and runtime-only

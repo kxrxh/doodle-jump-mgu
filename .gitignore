@@ -16,3 +16,5 @@ native.*.sha256
 *.pack
 *.tgz
 *.mgu
+/apps/kxrxh_doodle_jump/LICENSE
+/apps/kxrxh_doodle_jump/NOTICE

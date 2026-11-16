@@ -548,7 +548,7 @@ async function runInner(impl) {
          * controller.grab(true): the iDrive controller's knob, press and tilt go to this app only
          * (the HMI stops moving its focus or opening its menus); BACK, MENU and the touchscreen
          * still work. Read the controller with signals (FrontCCU). Only while shown; release with
-         * grab(false). Needs the GPU renderer and mgu-inputgate.so in the HMI (deploy-car.sh).
+         * grab(false). Needs the GPU renderer and mgu-inputgate.so in the HMI.
          */
         // onInput(fn): while grabbed, fn gets each controller event the HMI didn't (same fields
         // as FrontCCU.statusRotaryEncoderState, enums as numbers)
