@@ -54,6 +54,7 @@ class RenderClient extends EventEmitter {
         this.sock = null;
         this.connected = false;
         this.ready = false;
+        this.generation = 0;
         this.screen = { w: 1920, h: 720 };
         this.placement = null;
         this.visible = false;
@@ -77,6 +78,7 @@ class RenderClient extends EventEmitter {
         if (this.opts.file) {
             this.fd = fs.openSync(this.opts.file, 'w');
             this.connected = this.ready = true;
+            this.generation++;
             this._write(msg(M.HELLO, this._hello()));
             if (this.opts.native) { this.native = true; this._write(this._u32msg(X.MODE, [X_MODE_LAYER])); }
             setImmediate(() => this.emit('ready', this.screen));
@@ -162,7 +164,7 @@ class RenderClient extends EventEmitter {
         if (this.sock) this.sock.destroy();
         if (this.fd !== null) { fs.closeSync(this.fd); this.fd = null; }
     }
-    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.waiting = false; }
+    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.sent.scene = null; this.waiting = false; }
     _write(b) {
         if (this.fd !== null) { fs.writeSync(this.fd, b); return true; }
         return this.sock && this.connected ? this.sock.write(b) : false;
@@ -195,9 +197,11 @@ class RenderClient extends EventEmitter {
             if (type === X.READY && p.length >= 12) {
                 const caps = p.readUInt32LE(8);
                 this.native = true;
-                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8) };
+                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8), scenes:!!(caps & 256) };
             } else if (type === E.READY) {
                 this.ready = true; this.errLogged = false;
+                this.generation++;
+                if (this.native && this.info && this.info.scenes) rec.clearScene();
                 this.screen = { w: p.readUInt32LE(4), h: p.readUInt32LE(8) };
                 this.touch = p.length >= 16 && p.readUInt32LE(12) !== 0;
                 this.log.info('renderd: connected, screen ' + this.screen.w + 'x' + this.screen.h +
@@ -238,7 +242,12 @@ class RenderClient extends EventEmitter {
                 this.stats = { fps: p.readUInt32LE(0), avgUs: p.readUInt32LE(4), maxUs: p.readUInt32LE(8) };
                 this.emit('stats', this.stats);
             } else if (type === E.ERROR) {
-                this.log.warn('renderd error: ' + p.toString());
+                const error = p.toString();
+                if (error.indexOf('scene GPU:') === 0 && this.info) {
+                    this.info.scenes = false;
+                    rec.clearScene();
+                }
+                this.log.warn('renderd error: ' + error);
             }
         }
     }
@@ -295,6 +304,18 @@ class RenderClient extends EventEmitter {
         if (r.ramps) r.ramps.forEach((id) => this._ensureRamp(id));
         if (r.layersUsed || r.sublayers) (r.layersUsed || r.sublayers).forEach((id) => this._ensureLayer(id));
         if (r.images) r.images.forEach((id) => this._ensureImage(id));
+        if (r.scenes) this._ensureScene();
+    }
+    _ensureScene() {
+        if (!this.native || !this.info || !this.info.scenes) throw new Error('Renderer does not support GPU scenes');
+        const scene = rec.sceneState;
+        if (this.sent.scene === scene.ver) return;
+        scene.pending.forEach(data => { if (data.readUInt32LE(12)) this._write(data); });
+        this._write(scene.frame);
+        scene.pending.forEach(data => { if (!data.readUInt32LE(12)) this._write(data); });
+        // The socket owns queued uploads; only the small draw list survives publication.
+        scene.pending.clear();
+        this.sent.scene = scene.ver;
     }
     /** upload a pixel image when this connection hasn't got its current version */
     _ensureImage(id) {
@@ -352,8 +373,7 @@ class RenderClient extends EventEmitter {
     }
 
     _words(source) {
-        if (!this.native) return source;
-        const out=new Uint32Array(source),sizes=[0,2,6,0,7,8,0,9,12,7,0,0,4,5,1,10,2,4,7];
+        const out=this.native?new Uint32Array(source):source,sizes=[0,2,6,0,7,8,0,9,12,7,0,0,4,5,1,10,2,4,7,0,6];
         for(let i=0;i<out.length;){
             const op=out[i];let n=sizes[op];
             if(op===3)n=6+2*out[i+5];
@@ -361,7 +381,8 @@ class RenderClient extends EventEmitter {
             else if(op===10)n=2+9*out[i+1];
             else if(op===11)n=4+8*out[i+3];
             if(!n || i+n>out.length)throw new Error('Invalid recorded image frame');
-            if(op===18){const id=out[i+1];out.copyWithin(i+1,i+3,i+7);out[i+5]=0;out[i+6]=id;}
+            if(op===20&&(!this.native||!this.info||!this.info.scenes))throw new Error('Renderer does not support GPU scenes');
+            if(op===18&&this.native){const id=out[i+1];out.copyWithin(i+1,i+3,i+7);out[i+5]=0;out[i+6]=id;}
             i+=n;
         }
         return out;
@@ -370,6 +391,7 @@ class RenderClient extends EventEmitter {
     /** Send a recorded frame (record.js Recorder). Returns false if not connected. */
     frame(r) {
         if (!this.ready || !this.placement) return false;
+        if (r.scenes && !rec.sceneState.frame) return false;
         this._ensureRes(r);
         this.waiting = true;
         return this._write(msg(M.FRAME, words(this._words(r.words()))));

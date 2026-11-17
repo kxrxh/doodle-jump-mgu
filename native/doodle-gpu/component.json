@@ -1,0 +1,24 @@
+{
+  "id": "doodle-gpu",
+  "kind": "tool",
+  "version": "1.0.0",
+  "title": "Doodle Jump GPU support",
+  "description": "Adds textured game scenes to the Store renderer",
+  "mguHmi": ["ID7"],
+  "optional": true,
+  "uninstallable": true,
+  "requires": { "mgu-render": "0.6.23" },
+  "files": [
+    { "path": "mgu-render", "from": "build/mgu-render", "mode": "0755" },
+    { "path": "LICENSE.mgu-renderd", "from": "build/LICENSE.mgu-renderd", "mode": "0644" },
+    { "path": "LICENSE.store", "from": "build/LICENSE.store", "mode": "0644" },
+    { "path": "gpu_check.js", "mode": "0644" }
+  ],
+  "dropins": [
+    { "unit": "mgu-render.service", "name": "90-doodle-gpu.conf" }
+  ],
+  "restart": ["mgu-render.service"],
+  "keepRunning": true,
+  "check": ["gpu_check.js"],
+  "deactivate": ["node", "gpu_check.js", "--removed"]
+}

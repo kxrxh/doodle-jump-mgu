@@ -1,4 +1,4 @@
-# !WIP! Doodle Jump for BMW iDrive 7 !WIP! 
+# Doodle Jump for BMW iDrive 7
 
 Play Doodle Jump on iDrive 7 (MGU), with all themes and sounds.
 
@@ -11,7 +11,7 @@ Play Doodle Jump on iDrive 7 (MGU), with all themes and sounds.
 2. Select **Releases**.
 3. Install **Doodle Jump**.
 
-Store installs the required components automatically. Nothing needs to be built on the car.
+Store installs Python and GPU support automatically. Restart the MGU if Store asks.
 
 To update, refresh the source in Store and install the latest version.
 
@@ -19,6 +19,6 @@ To update, refresh the source in Store and install the latest version.
 
 Touch controls work without extra tools. iDrive controller support depends on your setup.
 
-Experimental: physical head-unit installation isn't tested yet
+The GPU renderer keeps all themes and sounds. Performance on a physical MGU still needs confirmation.
 
 ![Gameplay](docs/screenshots/gameplay.png)

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const MAX_PACKET = 2048 * 2048 * 4 + 12;
+const MAX_GPU_PACKET = 64 << 20;
 const PACK_CHUNK = 1 << 20;
 const MAX_PACK_INDEX = 1 << 20;
 const MAX_PACK_ENTRY = 16 << 20;
@@ -23,9 +24,9 @@ class PacketReader {
                 chunk.copy(this.header, this.at, offset, offset + n); this.at += n; offset += n;
                 if (this.at !== 8) continue;
                 this.type = this.header.toString('ascii', 0, 4);
-                if (this.type !== 'FRM1' && this.type !== 'FRM2' && this.type !== 'EVT1' && this.type !== 'TEX1') throw new Error('Unknown engine packet type');
+                if (this.type !== 'FRM1' && this.type !== 'FRM2' && this.type !== 'EVT1' && this.type !== 'TEX1' && this.type !== 'GPF1') throw new Error('Unknown engine packet type');
                 const length = this.header.readUInt32LE(4);
-                if (length > MAX_PACKET) throw new Error('Invalid engine packet size');
+                if (length > (this.type === 'GPF1' ? MAX_GPU_PACKET : MAX_PACKET)) throw new Error('Invalid engine packet size');
                 this.reuse = this.frames && (this.type === 'FRM1' || (this.type === 'FRM2' && length > 12));
                 if (this.reuse) {
                     // Empty FRM2 updates keep the last changed patches borrowed until their successor arrives.
@@ -45,6 +46,48 @@ class PacketReader {
             }
         }
     }
+}
+
+function validateGPU(body) {
+    if (!Buffer.isBuffer(body) || body.length > MAX_GPU_PACKET) throw new Error('Invalid GPU scene size');
+    let scene = false;
+    for (let i = 0; i < body.length;) {
+        if (i + 8 > body.length) throw new Error('Truncated GPU message');
+        const type = body.readUInt32LE(i), length = body.readUInt32LE(i + 4), end = i + 8 + length;
+        if (end > body.length || (length & 3)) throw new Error('Invalid GPU message length');
+        const at = i + 8;
+        if (type === 0x4d520007) {
+            if (length < 12) throw new Error('Truncated GPU texture');
+            const id = body.readUInt32LE(at), w = body.readUInt32LE(at + 4), h = body.readUInt32LE(at + 8);
+            const remove = w === 0 && h === 0;
+            if (!id || (remove ? !scene || length !== 12 : scene || !w || !h || w > 2048 || h > 2048 || length !== 12 + w*h*4))
+                throw new Error('Invalid GPU texture');
+        } else if (type === 0x4d520008) {
+            if (scene || length < 8) throw new Error('Invalid GPU scene');
+            const w = body.readUInt32LE(at), h = body.readUInt32LE(at + 4);
+            if (!((w === 408 && h === 720) || (w === 544 && h === 960))) throw new Error('Invalid GPU scene dimensions');
+            for (let command = at + 8; command < end;) {
+                const op = body.readUInt32LE(command);
+                let floats, next;
+                if (op === 1) { floats = command + 4; next = command + 20; }
+                else if (op === 2) {
+                    if (command + 28 > end) throw new Error('Truncated GPU scene draw');
+                    const flags = body.readUInt32LE(command + 8), source = body.readUInt32LE(command + 12),
+                        destination = body.readUInt32LE(command + 16), replace = body.readUInt32LE(command + 20), count = body.readUInt32LE(command + 24);
+                    if (flags > 15 || ![0, 1, 770, 771].includes(source) || ![0, 1, 768, 770, 771].includes(destination) ||
+                        replace > 2 || !count || count % 3 || count > 65536) throw new Error('Invalid GPU scene draw');
+                    floats = command + 28; next = floats + count*32;
+                } else throw new Error('Unknown GPU scene command');
+                if (next > end) throw new Error('Truncated GPU scene command');
+                for (let offset = floats; offset < next; offset += 4)
+                    if (!Number.isFinite(body.readFloatLE(offset))) throw new Error('Nonfinite GPU scene vertex');
+                command = next;
+            }
+            scene = true;
+        } else throw new Error('Unknown GPU message');
+        i = end;
+    }
+    if (!scene) throw new Error('Missing GPU scene');
 }
 
 function mkdir(directory) {
@@ -122,7 +165,7 @@ function unpack(file, directory) {
 class Engine {
     constructor(dataDir, log) {
         this.dataDir = dataDir; this.log = log; this.ready = false; this.busy = false; this.dead = false; this.playing = false;
-        this.onFrame = null; this.onError = null; this.onDialog = null; this.onTexture = null;
+        this.onFrame = null; this.onGPU = null; this.onError = null; this.onDialog = null; this.onTexture = null;
         this.scenery = { sprites: {} };
     }
     start() {
@@ -153,7 +196,12 @@ class Engine {
         child.on('exit', (code, signal) => { if (!this.dead) this.fail(new Error('Engine exited: ' + (signal || code))); });
     }
     packet(type,body) {
-            if (type === 'TEX1') {
+            if (type === 'GPF1') {
+                validateGPU(body);
+                this.frameImage = null;
+                this.busy = false;
+                if (this.onGPU) this.onGPU(body);
+            } else if (type === 'TEX1') {
                 if (body.length<12) throw new Error('Short scenery texture');
                 const id=body.readUInt32LE(0),w=body.readUInt32LE(4),h=body.readUInt32LE(8);
                 if (id<2 || id>100 || !w || !h || w>2048 || h>2048 || body.length!==12+w*h*4) throw new Error('Invalid scenery texture');

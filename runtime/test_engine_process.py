@@ -1,5 +1,8 @@
 import io
+import json
 from pathlib import Path
+import struct
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -10,6 +13,43 @@ import engine_process
 
 
 class ProcessTests(unittest.TestCase):
+    def packets(self, data):
+        packets = []
+        while data:
+            size = struct.unpack_from('<I', data, 4)[0]
+            self.assertGreaterEqual(len(data), size + 8)
+            packets.append((data[:4], data[8:8 + size]))
+            data = data[8 + size:]
+        return packets
+
+    def test_gpu_frames_skip_pixel_encoding_and_switch_back_to_a_full_image(self):
+        from audio import Audio
+        from game import ORIGINAL
+
+        commands = [dict(frame=True, gpu=True, gpu_reset=True, side_width=0),
+                    dict(frame=True, gpu=True, side_width=0),
+                    dict(frame=True, gpu=False, side_width=0)]
+        output = SimpleNamespace(buffer=io.BytesIO())
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(engine_process, 'Audio', side_effect=lambda assets: Audio(assets, playback=False)), \
+             patch.multiple(engine_process.sys, stdin=iter(json.dumps(c) + '\n' for c in commands),
+                            stdout=output, stderr=io.StringIO()):
+            engine_process.run(ORIGINAL, Path(directory))
+        frames = [(kind, data) for kind, data in self.packets(output.buffer.getvalue())
+                  if kind in (b'GPF1', b'FRM2')]
+        self.assertEqual([kind for kind, _ in frames], [b'GPF1', b'GPF1', b'FRM2'])
+        for _, data in frames[:2]:
+            messages = []
+            while data:
+                kind, size = struct.unpack_from('<II', data)
+                self.assertLessEqual(size + 8, len(data))
+                messages.append(kind)
+                data = data[8 + size:]
+            self.assertIn(0x4d520008, messages)
+        width, height, count = struct.unpack_from('<III', frames[-1][1])
+        self.assertEqual((width, height, count), (408, 720, 1))
+        self.assertEqual(struct.unpack_from('<IIII', frames[-1][1], 12), (0, 0, 408, 720))
+
     def test_panorama_images_are_released_before_waiting_for_another_frame(self):
         images = []
         game = SimpleNamespace(

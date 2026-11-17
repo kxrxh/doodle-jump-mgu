@@ -4,7 +4,7 @@
     {
       "id": "kxrxh_doodle_jump",
       "kind": "app",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "title": "Doodle Jump",
       "description": "Doodle Jump for MGU7",
       "author": "kxrxh",
@@ -12,16 +12,39 @@
         "ID7"
       ],
       "requires": {
-        "mgu-render": "0.6.12",
-        "mgu-python": "1.0.3"
+        "mgu-render": "0.6.23",
+        "mgu-python": "1.0.3",
+        "doodle-gpu": "1.0.0"
       },
       "icon": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/catalog/kxrxh_doodle_jump.png",
       "iconSha256": "5eb833c388867f4d29701358f81687f6cf53a7140eb18376bdf491b679c7b581",
       "artifact": {
-        "name": "kxrxh_doodle_jump@0.8.0.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.8.0/kxrxh_doodle_jump@0.8.0.tgz",
-        "size": 24943701,
-        "sha256": "68b1254ec37923dec9a9620a595941475e5a71e5193b7406e4d644cb161c15c0"
+        "name": "kxrxh_doodle_jump@0.9.0.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.9.0/kxrxh_doodle_jump@0.9.0.tgz",
+        "size": 24956148,
+        "sha256": "c672603efd96172b5d6cc26d95de674c6fc0b5c74fa156145904dc0ee9294334"
+      }
+    },
+    {
+      "id": "doodle-gpu",
+      "kind": "tool",
+      "version": "1.0.0",
+      "title": "Doodle Jump GPU support",
+      "description": "Adds textured game scenes to the Store renderer",
+      "mguHmi": [
+        "ID7"
+      ],
+      "requires": {
+        "mgu-render": "0.6.23"
+      },
+      "optional": true,
+      "uninstallable": true,
+      "author": "kxrxh",
+      "artifact": {
+        "name": "doodle-gpu@1.0.0.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.9.0/doodle-gpu@1.0.0.tgz",
+        "size": 87513,
+        "sha256": "877fa863a352a59d29853423273b4291d80f36f8385801d98a10c7f5cc7e4a52"
       }
     }
   ]

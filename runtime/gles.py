@@ -51,6 +51,11 @@ class GLES:
             'graphics_create': ([ctypes.c_int, ctypes.c_int, ctypes.c_void_p], ctypes.c_void_p),
             'graphics_destroy': ([ctypes.c_void_p], None),
             'graphics_render_target': ([ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p], ctypes.c_int),
+            'graphics_gpu_begin': ([ctypes.c_void_p, ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            'graphics_gpu_finish': ([ctypes.c_void_p], ctypes.c_int),
+            'graphics_gpu_data': ([ctypes.c_void_p], ctypes.c_void_p),
+            'graphics_gpu_size': ([ctypes.c_void_p], ctypes.c_size_t),
+            'graphics_gpu_error': ([ctypes.c_void_p], ctypes.c_char_p),
             'graphics_asset': ([ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int], None),
             'graphics_draws': ([ctypes.c_void_p], ctypes.c_uint64),
             'graphics_bound_texture': ([ctypes.c_void_p], ctypes.c_uint32),
@@ -85,6 +90,18 @@ class GLES:
         self.native.restype = None
         lib.unpack16.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
         lib.unpack16.restype = None
+
+    def begin_gpu_frame(self, enabled, reset=False):
+        if type(enabled) is not bool or type(reset) is not bool:
+            raise ValueError('GPU frame flags must be booleans')
+        if not self.library.graphics_gpu_begin(self._handle, enabled, reset):
+            raise RuntimeError(self.library.graphics_gpu_error(self._handle).decode())
+
+    def gpu_frame(self):
+        if not self.library.graphics_gpu_finish(self._handle):
+            raise RuntimeError(self.library.graphics_gpu_error(self._handle).decode())
+        return ctypes.string_at(self.library.graphics_gpu_data(self._handle),
+                                self.library.graphics_gpu_size(self._handle))
 
     @property
     def asset_name(self):

@@ -244,6 +244,7 @@ console.log('Lossless region frame reconstruction and validation: passed');
 
 {
     let published=null,snapshot=null;
+    const sameStorage=(a,b)=>a.buffer===b.buffer && a.byteOffset===b.byteOffset;
     const pooled=new PacketReader((type,body)=>{
         if(published)assert.deepStrictEqual(published,snapshot,'the last changed packet survives until its successor is delivered');
         if(type==='FRM1'||body.length!==12){published=body;snapshot=Buffer.from(body);}
@@ -258,20 +259,20 @@ console.log('Lossless region frame reconstruction and validation: passed');
     pooled.feed(successor.slice(0,500));
     assert.deepStrictEqual(published,snapshot,'a fragmented successor keeps published patches intact');
     pooled.feed(successor.slice(500));
-    assert.notStrictEqual(published.buffer,first.buffer);
+    assert(!sameStorage(published,first));
     const second=published;
     pooled.feed(wire('FRM2',Buffer.alloc(1000,3)));
-    assert.strictEqual(published.buffer,first.buffer,'smaller packets reuse the slot capacity');
+    assert(sameStorage(published,first),'smaller packets reuse the slot capacity');
     assert.strictEqual(published.length,1000,'a reused packet exposes only its own bytes');
     pooled.feed(wire('FRM1',Buffer.alloc(100,4)));
-    assert.strictEqual(published.buffer,second.buffer,'FRM1 and changed FRM2 share the two slots');
+    assert(sameStorage(published,second),'FRM1 and changed FRM2 share the two slots');
     pooled.feed(wire('FRM2',Buffer.alloc(5000,5)));
-    assert.notStrictEqual(published.buffer,first.buffer,'a larger packet grows its slot');
+    assert(!sameStorage(published,first),'a larger packet grows its slot');
     const larger=published;
     for(let i=0;i<10;i++)pooled.feed(wire('FRM2',patchFrame(408,720,[])));
     pooled.feed(wire('FRM1',Buffer.alloc(3000,6)));
     pooled.feed(wire('FRM2',Buffer.alloc(200,7)));
-    assert.strictEqual(published.buffer,larger.buffer,'the grown slot survives later size changes');
+    assert(sameStorage(published,larger),'the grown slot survives later size changes');
     assert.strictEqual(published.length,200);
 }
 console.log('Region packet recycling across unchanged and fragmented frames: passed');

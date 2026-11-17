@@ -18,3 +18,4 @@ native.*.sha256
 *.mgu
 /apps/kxrxh_doodle_jump/LICENSE
 /apps/kxrxh_doodle_jump/NOTICE
+/native/doodle-gpu/build/

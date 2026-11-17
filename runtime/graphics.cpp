@@ -60,7 +60,7 @@ struct Pointer {
 };
 struct Texture {
     int width = 0, height = 0, excluded = 0;
-    uint64_t revision = 0;
+    uint64_t revision = 0, content_revision = 0;
     std::vector<uint8_t> pixels;
     ImageSlice shared;
     std::vector<uint32_t> palette;
@@ -160,6 +160,121 @@ struct Graphics {
     std::vector<Vertex> background;
     std::string cache_key;
     std::vector<uint8_t> cache;
+    struct GpuTexture { uint32_t token; uint64_t revision; };
+    bool gpu_enabled = false, gpu_finished = false;
+    uint32_t next_gpu_token = 1;
+    std::map<uint32_t, GpuTexture> gpu_current;
+    std::set<uint32_t> gpu_live, gpu_used;
+    std::vector<uint8_t> gpu_output, gpu_commands;
+    std::string gpu_error;
+    static constexpr size_t gpu_limit = 64 * 1024 * 1024;
+    static void gpu_word(std::vector<uint8_t> &out, uint32_t value) {
+        for (unsigned i = 0; i < 4; ++i)
+            out.push_back(uint8_t(value >> (i * 8)));
+    }
+    static void gpu_float(std::vector<uint8_t> &out, float value) {
+        if (!std::isfinite(value))
+            throw std::runtime_error("Nonfinite GPU scene value");
+        uint32_t bits;
+        std::memcpy(&bits, &value, 4);
+        gpu_word(out, bits);
+    }
+    void gpu_reserve(size_t output, size_t commands = 0) {
+        if (output > gpu_limit - gpu_output.size() ||
+            commands > gpu_limit - gpu_commands.size() ||
+            gpu_output.size() + output > gpu_limit - gpu_commands.size() - commands)
+            throw std::runtime_error("GPU scene exceeds its size limit");
+        const size_t output_size = gpu_output.size() + output;
+        const size_t command_size = gpu_commands.size() + commands;
+        if (output_size > gpu_output.capacity())
+            gpu_output.reserve(std::max(output_size, std::min(gpu_limit, gpu_output.capacity() * 2)));
+        if (command_size > gpu_commands.capacity())
+            gpu_commands.reserve(std::max(command_size, std::min(gpu_limit, gpu_commands.capacity() * 2)));
+    }
+    void gpu_begin(bool enabled, bool reset) {
+        if (gpu_enabled != enabled) {
+            std::vector<uint8_t>().swap(cache);
+            cache_key.clear();
+        }
+        gpu_enabled = enabled;
+        gpu_finished = false;
+        gpu_error.clear();
+        gpu_used.clear();
+        if (gpu_output.capacity() > 1024 * 1024)
+            std::vector<uint8_t>().swap(gpu_output);
+        else
+            gpu_output.clear();
+        if (gpu_commands.capacity() > 1024 * 1024)
+            std::vector<uint8_t>().swap(gpu_commands);
+        else
+            gpu_commands.clear();
+        if (reset)
+            gpu_current.clear();
+    }
+    uint32_t gpu_texture(Texture *tex) {
+        if (!tex || !tex->has_pixels())
+            return 0;
+        if (tex->width <= 0 || tex->height <= 0 || tex->width > 2048 || tex->height > 2048)
+            throw std::runtime_error("GPU texture exceeds its size limit");
+        auto found = gpu_current.find(texture);
+        if (found != gpu_current.end() && found->second.revision == tex->content_revision) {
+            gpu_used.insert(found->second.token);
+            return found->second.token;
+        }
+        if (!next_gpu_token)
+            throw std::runtime_error("GPU texture token overflow");
+        const uint32_t token = next_gpu_token++;
+        const size_t bytes = size_t(tex->width) * tex->height * 4;
+        gpu_reserve(20 + bytes);
+        gpu_word(gpu_output, 0x4d520007);
+        gpu_word(gpu_output, uint32_t(12 + bytes));
+        gpu_word(gpu_output, token);
+        gpu_word(gpu_output, tex->width);
+        gpu_word(gpu_output, tex->height);
+        const auto view = tex->view();
+        for (size_t i = 0; i < bytes / 4; ++i)
+            gpu_word(gpu_output, texture_pixel(&view, i));
+        gpu_current[texture] = GpuTexture{token, tex->content_revision};
+        gpu_live.insert(token);
+        gpu_used.insert(token);
+        return token;
+    }
+    void gpu_finish() {
+        if (!gpu_enabled || gpu_finished)
+            return;
+        std::set<uint32_t> keep = gpu_used;
+        for (auto it = gpu_current.begin(); it != gpu_current.end();) {
+            auto tex = textures.find(it->first);
+            if (tex == textures.end() || tex->second.content_revision != it->second.revision)
+                it = gpu_current.erase(it);
+            else {
+                keep.insert(it->second.token);
+                ++it;
+            }
+        }
+        size_t retired = 0;
+        for (auto token : gpu_live)
+            retired += !keep.count(token);
+        gpu_reserve(16 + gpu_commands.size() + retired * 20);
+        gpu_word(gpu_output, 0x4d520008);
+        gpu_word(gpu_output, uint32_t(8 + gpu_commands.size()));
+        gpu_word(gpu_output, render_width);
+        gpu_word(gpu_output, render_height);
+        gpu_output.insert(gpu_output.end(), gpu_commands.begin(), gpu_commands.end());
+        for (auto it = gpu_live.begin(); it != gpu_live.end();) {
+            if (keep.count(*it)) {
+                ++it;
+                continue;
+            }
+            gpu_word(gpu_output, 0x4d520007);
+            gpu_word(gpu_output, 12);
+            gpu_word(gpu_output, *it);
+            gpu_word(gpu_output, 0);
+            gpu_word(gpu_output, 0);
+            it = gpu_live.erase(it);
+        }
+        gpu_finished = true;
+    }
     Graphics(int w, int h, uint8_t *f)
         : width(w), height(h), render_width(w), render_height(h), frame(f), viewport{{0, 0, w, h}} {}
     Matrix &matrix() { return matrices.at(matrix_mode).back(); }
@@ -292,6 +407,7 @@ struct Graphics {
             }
         } else
             throw std::runtime_error("Unsupported GLES primitive");
+        triangles.resize(triangles.size() / 3 * 3);
         if (triangles.empty())
             return;
         Rectangle box{vertices[0][0], vertices[0][1], vertices[0][0], vertices[0][1],
@@ -325,7 +441,7 @@ struct Graphics {
                 append(key, v);
         }
         after_clear = false;
-        if (cached && !cache.empty() && key == cache_key) {
+        if (!gpu_enabled && cached && !cache.empty() && key == cache_key) {
             std::copy(cache.begin(), cache.end(), frame);
             ++draws;
             return;
@@ -342,6 +458,24 @@ struct Graphics {
         auto param = [&](uint32_t name, uint32_t fallback) {
             return tex && tex->params.count(name) ? tex->params.at(name) : fallback;
         };
+        if (gpu_enabled) {
+            const uint32_t token = gpu_texture(tex);
+            gpu_reserve(0, 28 + data.size() * sizeof(float));
+            gpu_word(gpu_commands, 2);
+            gpu_word(gpu_commands, token);
+            gpu_word(gpu_commands, (enabled[0xbe2] ? 1 : 0) |
+                        (param(0x2800, 9729) == 9729 ? 2 : 0) |
+                        (param(0x2802, 10497) == 10497 ? 4 : 0) |
+                        (param(0x2803, 10497) == 10497 ? 8 : 0));
+            gpu_word(gpu_commands, source);
+            gpu_word(gpu_commands, destination);
+            gpu_word(gpu_commands, replace);
+            gpu_word(gpu_commands, triangles.size());
+            for (float value : data)
+                gpu_float(gpu_commands, value);
+            ++draws;
+            return;
+        }
         auto view = tex ? tex->view() : TextureView{};
         raster_parallel(frame, render_width, render_height, data.data(), triangles.size(),
                        tex && tex->has_pixels() ? &view : nullptr, tex ? tex->width : 0,
@@ -363,7 +497,7 @@ struct Graphics {
         t.height = h;
         t.asset = asset;
         t.excluded = asset_excluded;
-        t.revision = ++revision;
+        t.content_revision = t.revision = ++revision;
         t.clear_pixels();
         if (t.excluded || !w || !h)
             return;
@@ -493,8 +627,14 @@ struct Graphics {
                 std::array<uint8_t, 4> rgba;
                 for (int i = 0; i < 4; ++i)
                     rgba[i] = std::max(0.0, std::min(255.0, std::nearbyint(clear_color[i] * 255)));
-                for (size_t i = 0; i < size_t(render_width) * render_height; ++i)
-                    std::copy(rgba.begin(), rgba.end(), frame + i * 4);
+                if (gpu_enabled) {
+                    gpu_reserve(0, 20);
+                    gpu_word(gpu_commands, 1);
+                    for (double value : clear_color)
+                        gpu_float(gpu_commands, value);
+                } else
+                    for (size_t i = 0; i < size_t(render_width) * render_height; ++i)
+                        std::copy(rgba.begin(), rgba.end(), frame + i * 4);
                 after_clear = true;
             }
         } else if (name == "glMatrixMode") {
@@ -610,6 +750,7 @@ struct Graphics {
             throw std::runtime_error("Unknown native GLES import: " + name);
     }
 };
+constexpr size_t Graphics::gpu_limit;
 } // namespace
 extern "C" {
 void *graphics_create(int width, int height, uint8_t *frame) {
@@ -636,6 +777,39 @@ int graphics_render_target(void *handle, int width, int height, uint8_t *frame) 
 int graphics_call(void *handle, NativeCall *call, NativeResult *result) {
     static_cast<Graphics *>(handle)->call(*call, *result);
     return 0;
+}
+int graphics_gpu_begin(void *handle, int enabled, int reset) {
+    if (!handle)
+        return 0;
+    auto &g = *static_cast<Graphics *>(handle);
+    try {
+        g.gpu_begin(enabled != 0, reset != 0);
+        return 1;
+    } catch (const std::exception &error) {
+        g.gpu_error = error.what();
+        return 0;
+    }
+}
+int graphics_gpu_finish(void *handle) {
+    if (!handle)
+        return 0;
+    auto &g = *static_cast<Graphics *>(handle);
+    try {
+        g.gpu_finish();
+        return 1;
+    } catch (const std::exception &error) {
+        g.gpu_error = error.what();
+        return 0;
+    }
+}
+const uint8_t *graphics_gpu_data(void *handle) {
+    return static_cast<Graphics *>(handle)->gpu_output.data();
+}
+size_t graphics_gpu_size(void *handle) {
+    return static_cast<Graphics *>(handle)->gpu_output.size();
+}
+const char *graphics_gpu_error(void *handle) {
+    return static_cast<Graphics *>(handle)->gpu_error.c_str();
 }
 void graphics_asset(void *handle, const char *asset, int excluded) {
     auto &g = *static_cast<Graphics *>(handle);
@@ -735,7 +909,7 @@ uint32_t graphics_text_texture(void *handle, int width, int height, const uint8_
         t.pixels.assign(pixels, pixels + size_t(width) * height * 4);
         t.compact(4);
         t.params = {{0x2802, 33071}, {0x2803, 33071}};
-        t.revision = ++g.revision;
+        t.content_revision = t.revision = ++g.revision;
         return id;
     } catch (...) {
         return 0;

@@ -1,6 +1,6 @@
 'use strict';
 const mgu = require('./kit/mgu');
-const { Recorder, setImage } = require('./kit/record');
+const { Recorder, setImage, setScene, clearScene } = require('./kit/record');
 const Parked = require('./kit/parked');
 const { Engine } = require('./engine');
 const { cardSheet } = require('./kit/sheet');
@@ -19,9 +19,17 @@ mgu.run({
         let error = null, frames = 0, going = false, dialog = null;
         let recorder = null, lastFrame = Date.now(), lastPaint = Date.now(), lastCcu = 0, touchSource = null, lastMenu = '';
         let frameTimer = null, nextFrameAt = lastFrame + 1000/60, sideWidth = Math.ceil((W-H*544/960)/2*960/H);
+        let gpuEnabled = false, gpuSource = null, gpuGeneration = 0, gpuReset = false, submitted = null, frameMode = null;
         const controls = new Controls(() => engine.playing);
         const world = new World();
-        engine.onFrame = (rgba, w, h, patches) => { setImage(IMAGE, w, h, rgba, patches); frames++; queueFrame(); };
+        engine.onFrame = (rgba, w, h, patches) => {
+            if (acceptFrame(false)) { setImage(IMAGE, w, h, rgba, patches); frameMode = 'pixels'; frames++; }
+            queueFrame();
+        };
+        engine.onGPU = (data) => {
+            if (acceptFrame(true)) { setScene(data); frameMode = 'gpu'; frames++; }
+            queueFrame();
+        };
         engine.onTexture = (id,w,h,rgba) => setImage(id,w,h,rgba);
         engine.onError = (e) => { error = e; sync(); menu(); };
         engine.onDialog = (request) => {
@@ -63,6 +71,19 @@ mgu.run({
         function cancelFrame() {
             if (frameTimer !== null) { clearTimeout(frameTimer); frameTimer = null; }
         }
+        function updateGPU() {
+            const display = ctx.display, gpu = display && display.gpu;
+            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && display.own && display.own());
+            const source = enabled ? gpu : null, generation = enabled ? gpu.generation : 0;
+            if (enabled === gpuEnabled && source === gpuSource && generation === gpuGeneration) return;
+            gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation;
+            gpuReset = enabled; frameMode = null; clearScene();
+        }
+        function acceptFrame(gpu) {
+            updateGPU();
+            return submitted && submitted.gpu === gpu && gpuEnabled === gpu &&
+                (!gpu || (submitted.source === gpuSource && submitted.generation === gpuGeneration));
+        }
         function queueFrame() {
             if (frameTimer !== null || !going || !engine.ready || engine.busy || engine.dead) return;
             // A completed engine frame need not wait for the next renderer tick.
@@ -71,11 +92,15 @@ mgu.run({
         function requestFrame() {
             frameTimer = null; sync();
             if (!going || !engine.ready || engine.busy || engine.dead) return;
+            updateGPU();
             const now = Date.now(), dt = Math.min(.1, Math.max(1/120, (now-lastFrame)/1000));
-            if (engine.frame(Object.assign({ dt, side_width:sideWidth }, controls.take()))) {
+            const previous = submitted;
+            submitted = { gpu:gpuEnabled, source:gpuSource, generation:gpuGeneration };
+            if (engine.frame(Object.assign({ dt, side_width:sideWidth, gpu:gpuEnabled, gpu_reset:gpuReset }, controls.take()))) {
+                gpuReset = false;
                 lastFrame = now;
                 nextFrameAt = Math.max(nextFrameAt + 1000/60, now);
-            }
+            } else submitted = previous;
         }
         const controller = (v) => { if (going) controls.raw(v); else controls.observe(v); };
         ctx.controller.onInput((v) => { lastCcu = Date.now(); controller(v); });
@@ -110,7 +135,7 @@ mgu.run({
                 controls.cursor.y*h/960-cursor.hotspotY*scale,cursor.width*scale,cursor.height*scale);
         }
         ctx.loop('GAME', 60, () => {
-            sync(); connectTouch();
+            sync(); connectTouch(); updateGPU();
             const now = Date.now();
             const paintDt = Math.min(.1,Math.max(0,(now-lastPaint)/1000));
             lastPaint = now;
@@ -125,14 +150,15 @@ mgu.run({
                 recorder.reset();
                 world.draw(recorder,p.w,p.h,engine.scenery,controls.steering(),engine.playing,going?paintDt:0);
                 const gw = p.h*544/960, gx = (p.w-gw)/2;
-                if (frames) recorder.image(IMAGE, gx, 0, gw, p.h);
+                if (frameMode === 'gpu') recorder.scene(gx, 0, gw, p.h);
+                else if (frameMode === 'pixels') recorder.image(IMAGE, gx, 0, gw, p.h);
                 if (message) recorder.text(message, p.w/2, p.h/2, 24, '#573f2b', { align: 'center', font: 'bold' });
                 drawCursor(recorder,p.w,p.h);
                 cv.xf(1, 0, 0).append(recorder).xf();
             } else {
                 const gw = H*544/960;
                 world.draw(cv,W,H,engine.scenery,controls.steering(),engine.playing,going?paintDt:0);
-                if (frames) cv.image(IMAGE, (W-gw)/2, 0, gw, H);
+                if (frameMode === 'pixels') cv.image(IMAGE, (W-gw)/2, 0, gw, H);
                 if (message) cv.text(message, W/2, H/2, 24, '#573f2b', { align: 'center', font: 'bold' });
                 drawCursor(cv,W,H);
             }

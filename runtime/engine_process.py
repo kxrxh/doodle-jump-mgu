@@ -26,7 +26,8 @@ def run(original, data):
         packet(b'TEX1',struct.pack('<III',identifier,image.width,image.height)+image.tobytes())
     try:
         game = Game(original, data, render_size=(408, 720))
-        encoder = FrameEncoder(game.graphics.width, game.graphics.height)
+        encoder = None
+        gpu_mode = False
         audio = Audio(game.jni.assets)
         game.jni.audio = audio
         scenery=Scenery(game)
@@ -61,6 +62,15 @@ def run(original, data):
             side_width=command.get('side_width',1008)
             if type(side_width) is not int or not 0<=side_width<=2048:
                 raise ValueError('Invalid panorama width')
+            gpu = command.get('gpu', False)
+            reset = command.get('gpu_reset', False)
+            if type(gpu) is not bool or type(reset) is not bool:
+                raise ValueError('Invalid GPU frame mode')
+            if gpu or gpu_mode:
+                game.graphics.begin_gpu_frame(gpu, reset)
+            if gpu != gpu_mode:
+                encoder = None
+                gpu_mode = gpu
             frame = game.step(tilt, touches, dt, readback=False)
             planes=scenery.paper(side_width)
             for identifier,plane in planes:
@@ -73,7 +83,12 @@ def run(original, data):
             if game.jni.playing != playing:
                 playing = game.jni.playing
                 event(dict(type='playing', value=playing))
-            packet(b'FRM2', encoder.encode(frame))
+            if gpu:
+                packet(b'GPF1', game.graphics.gpu_frame())
+            else:
+                if encoder is None:
+                    encoder = FrameEncoder(game.graphics.width, game.graphics.height)
+                packet(b'FRM2', encoder.encode(frame))
     except BrokenPipeError:
         pass
     except BaseException as error:

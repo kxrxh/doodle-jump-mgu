@@ -17,7 +17,7 @@ const { t } = require('./i18n');
 
 const OP = {
     CLEAR: 1, RECT: 2, GRAD: 3, RRECT: 4, RSTROKE: 5, CARD: 6, RAMPRECT: 7, ARC: 8, LINE: 9,
-    TRIS: 10, GLYPHS: 11, LAYER: 12, CLIP: 13, NOCLIP: 14, QUAD: 15, ALPHA: 16, XF: 17, IMAGE: 18,
+    TRIS: 10, GLYPHS: 11, LAYER: 12, CLIP: 13, NOCLIP: 14, QUAD: 15, ALPHA: 16, XF: 17, IMAGE: 18, SCENE: 20,
 };
 
 /* ---------- colours: 0xRRGGBBAA ---------- */
@@ -74,6 +74,26 @@ function setImage(id, w, h, data, patches) {
     return im;
 }
 
+const sceneState = { ver:0, frame:null, pending:new Map() };
+function clearScene() { sceneState.frame = null; sceneState.pending.clear(); }
+function setScene(data) {
+    let frame = null;
+    const updates = [];
+    for (let i = 0; i < data.length;) {
+        if (i + 8 > data.length) throw new Error('Truncated GPU scene message');
+        const type = data.readUInt32LE(i), length = data.readUInt32LE(i + 4), end = i + 8 + length;
+        if (end > data.length || (length & 3)) throw new Error('Invalid GPU scene message');
+        if (type === 0x4d520007 && length >= 12) updates.push([data.readUInt32LE(i + 8), data.slice(i, end)]);
+        else if (type === 0x4d520008 && length >= 8 && !frame) frame = Buffer.from(data.slice(i, end));
+        else throw new Error('Invalid GPU scene message');
+        i = end;
+    }
+    if (!frame) throw new Error('Missing GPU scene');
+    updates.forEach(update => sceneState.pending.set(update[0], update[1]));
+    sceneState.frame = frame;
+    sceneState.ver = (sceneState.ver + 1) >>> 0;
+}
+
 // cached layers (static parts of widgets): drawn once, used by id
 let layerSeq = 0;
 const layerById = new Map();
@@ -94,6 +114,7 @@ class Recorder {
         this.atlases = new Set();    // glyph atlases and colour ramps it uses (uploaded once by the transport)
         this.ramps = new Set();
         this.images = new Set();     // pixel images it draws (setImage)
+        this.scenes = false;
         this.targets = [];           // what a tap or the controller can press on the page: { x, y, w, h, run, key } (target)
         this._extra = 0;
         this.extraUsed = false;      // the drawing read extra (it reaches below the page: display.js places it so)
@@ -102,7 +123,7 @@ class Recorder {
     /** logical px the screen has below the app's page (display.js), 0 if none */
     get extra() { if (this._extra) this.extraUsed = true; return this._extra; }
     set extra(v) { this._extra = v || 0; }
-    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); return this; }
+    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); this.scenes = false; return this; }
     _grow(k) {
         if (this.n + k <= this.u.length) return;
         let len = this.u.length * 2;
@@ -129,6 +150,13 @@ class Recorder {
         this.u[i] = OP.IMAGE; this.u[i + 1] = id; this.u[i + 2] = im.ver; f[i + 3] = x; f[i + 4] = y; f[i + 5] = w; f[i + 6] = h;
         this.images.add(id);
         this.n += 7; return this;
+    }
+    scene(x, y, w, h) {
+        if (!sceneState.frame || !(w > 0 && h > 0)) return this;
+        this._grow(6); const i = this.n;
+        this.u[i] = OP.SCENE; this.f[i + 1] = x; this.f[i + 2] = y; this.f[i + 3] = w; this.f[i + 4] = h;
+        this.u[i + 5] = sceneState.ver; this.n += 6; this.scenes = true;
+        return this;
     }
     clear(c) { this._grow(2); this.u[this.n++] = OP.CLEAR; this.u[this.n++] = pack(c || [0, 0, 0, 0]); return this; }
 
@@ -226,6 +254,7 @@ class Recorder {
         this._grow(w.length); this.u.set(w, this.n); this.n += w.length;
         r.atlases.forEach((a) => this.atlases.add(a)); r.ramps.forEach((a) => this.ramps.add(a));
         if (r.images) r.images.forEach((id) => this.images.add(id));
+        if (r.scenes) this.scenes = true;
         if (r.layersUsed) r.layersUsed.forEach((id) => (this.layersUsed || (this.layersUsed = new Set())).add(id));
         return this;
     }
@@ -370,4 +399,4 @@ function play(words, real) {
     return real;
 }
 
-module.exports = { Recorder, OP, pack, unpack, rampId, rampList, atlasId, atlasList, atlasById, makeLayer, dropLayer, layerById, play, softLayer, setImage, imageById };
+module.exports = { Recorder, OP, pack, unpack, rampId, rampList, atlasId, atlasList, atlasById, makeLayer, dropLayer, layerById, play, softLayer, setImage, imageById, setScene, clearScene, sceneState };
