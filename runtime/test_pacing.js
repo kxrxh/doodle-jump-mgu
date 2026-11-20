@@ -29,7 +29,7 @@ class Engine {
 }
 const canvas = { clear() { return this; }, image() {}, text() {} };
 const ctx = {
-    dataDir:'', log:{ info() {}, warn() {} }, settings:{ get() { return true; } },
+    dataDir:'', log:{ info() {}, warn() {} }, settings:{ get(key) { return key === 'parkedOnly'; } },
     ui:{ isVisible() { return visible; }, hasFocus() { return focused; }, text() {}, image() {},
         open(name) { visible = name === 'GAME'; }, onClick(id, fn) { clicks[id] = fn; }, onFocus(fn) { focus = fn; } },
     controller:{ grab() {}, onInput(fn) { input = fn; } }, signals:{ watch() {} },

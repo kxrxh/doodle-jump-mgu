@@ -199,7 +199,7 @@ class RenderClient extends EventEmitter {
                 this.native = true;
                 this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8), scenes:!!(caps & 256) };
             } else if (type === E.READY) {
-                this.ready = true; this.errLogged = false;
+                this.ready = true; this.errLogged = false; this.stats = null;
                 this.generation++;
                 if (this.native && this.info && this.info.scenes) rec.clearScene();
                 this.screen = { w: p.readUInt32LE(4), h: p.readUInt32LE(8) };
@@ -239,7 +239,7 @@ class RenderClient extends EventEmitter {
                     frontRotaryEncoderPushButton: p[3], frontRotaryEncoderDeflection: p[4],
                 });
             } else if (type === E.STATS) {
-                this.stats = { fps: p.readUInt32LE(0), avgUs: p.readUInt32LE(4), maxUs: p.readUInt32LE(8) };
+                this.stats = { at: Date.now(), fps: p.readUInt32LE(0), avgUs: p.readUInt32LE(4), maxUs: p.readUInt32LE(8) };
                 this.emit('stats', this.stats);
             } else if (type === E.ERROR) {
                 const error = p.toString();

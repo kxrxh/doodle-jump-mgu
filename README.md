@@ -19,6 +19,6 @@ To update, refresh the source in Store and install the latest version.
 
 Touch controls work without extra tools. iDrive controller support depends on your setup.
 
-The GPU renderer keeps all themes and sounds. Performance on a physical MGU still needs confirmation.
+Enable **Show FPS** in the game’s main menu to see the drawing mode (GPU or CPU), completed game frames per second, and the frame rate reported by the Store renderer. `--` means a reading is unavailable.
 
 ![Gameplay](docs/screenshots/gameplay.png)

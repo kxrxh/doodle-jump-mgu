@@ -89,6 +89,11 @@ assert(client.frame(parent));
 assert.deepStrictEqual(sent.map(b => b.readUInt32LE(0)), [TX, SCENE, TX, 7], 'upload textures, replace scene, retire old textures, then present');
 assert.deepStrictEqual(sent[0], texture(7, [1, 2, 3, 255]));
 assert.deepStrictEqual(sent[1], scene());
+const rendererStats = Buffer.alloc(12);
+rendererStats.writeUInt32LE(30, 0);
+const receivedAfter = Date.now();
+client._data(message(104, rendererStats));
+assert(client.stats.at >= receivedAfter, 'timestamp the renderer report so the overlay can expire it');
 const firstVersion = parent.words()[5];
 sent.length = 0; client.frame(parent);
 assert.deepStrictEqual(sent.map(b => b.readUInt32LE(0)), [7], 'already queued texture pixels and scenes are not retained for later uploads');
@@ -106,6 +111,7 @@ assert.throws(() => legacy._words(second.words()), /scene|GPU/i, 'scene commands
 record.setScene(frame());
 const stale = new record.Recorder(1920, 720).scene(600, 0, 408, 720);
 client._data(message(101, ready));
+assert.strictEqual(client.stats, null, 'a new connection starts without old FPS data');
 assert.strictEqual(client.frame(stale), false, 'a reconnect cannot publish a cached scene before the app refreshes its textures');
 console.log('GPU capability, resource lifetime and presentation: passed');
 
@@ -122,6 +128,13 @@ console.log('GPU driver failure fallback: passed');
     const { Controls } = require('../apps/kxrxh_doodle_jump/controls');
     let now = 1000, seq = 0, draw, focus, game, painting, visible = true, full = true;
     const timers = new Map(), requests = [], events = {};
+    let showFps = false;
+    const labels = [];
+    const text = record.Recorder.prototype.text;
+    record.Recorder.prototype.text = function(label, x, y, size, color, opts) {
+        labels.push(label);
+        return text.call(this, label, x, y, size, color, opts);
+    };
     const gpu = new EventEmitter(); gpu.ready = true; gpu.native = true; gpu.info = { scenes:true }; gpu.generation = 1;
     function later(fn, delay) { const id = ++seq; timers.set(id, { fn, at:now + Math.max(1, delay) }); return id; }
     function advance(ms) {
@@ -142,7 +155,7 @@ console.log('GPU driver failure fallback: passed');
         pixelFrame() { this.busy = false; this.onFrame(Buffer.alloc(408*720*4), 408, 720); }
     }
     const ctx = {
-        dataDir:'', log:{ info() {}, warn() {} }, settings:{ get() { return true; } },
+        dataDir:'', log:{ info() {}, warn() {} }, settings:{ get(key) { return key === 'showFps' ? showFps : true; } },
         ui:{ isVisible() { return visible; }, hasFocus() { return visible; }, text() {}, image(id, value) { painting = value; },
             open() {}, onClick() {}, onFocus(fn) { focus = fn; } },
         display:{ gpu, own() { return full; } }, controller:{ grab() {}, onInput() {} }, signals:{ watch() {} },
@@ -165,13 +178,27 @@ console.log('GPU driver failure fallback: passed');
     assert.strictEqual(requests[0].gpu_reset, true, 'the first GPU frame uploads a fresh texture set');
     game.gpuFrame(); draw();
     assert.strictEqual(painting.scenes, true, 'the game scene replaces the center pixel image in the fullscreen recording');
+    const fpsLabel = () => labels.filter(label => label.includes(' FPS')).pop();
+    assert.strictEqual(fpsLabel(), undefined, 'FPS display is hidden when disabled');
+    showFps = true; draw();
+    assert.strictEqual(fpsLabel(), 'GPU | Game -- | Render -- FPS');
+    for (let i = 0; i < 50; i++) {
+        advance(20); game.gpuFrame();
+        if (i === 49) gpu.stats = { fps:30, at:now };
+        draw();
+    }
+    assert.strictEqual(fpsLabel(), 'GPU | Game 50 | Render 30 FPS', 'counts completed game frames separately from Store render stats');
+    advance(3000); draw();
+    assert.strictEqual(fpsLabel(), 'GPU | Game 0 | Render -- FPS', 'stale renderer samples expire');
+    showFps = false; labels.length = 0; draw();
+    assert.strictEqual(fpsLabel(), undefined);
     advance(17);
     assert.strictEqual(requests[1].gpu_reset, false, 'the same renderer session keeps its GPU textures');
     visible = false; focus(); gpu.generation++; draw();
     game.gpuFrame(); draw();
     assert.strictEqual(painting.scenes, false, 'a late response from the old renderer session stays hidden');
     visible = true; focus(); draw(); advance(17);
-    assert.strictEqual(requests[2].gpu_reset, true, 'a renderer reconnect while paused refreshes all textures on resume');
+    assert.strictEqual(requests[requests.length - 1].gpu_reset, true, 'a renderer reconnect while paused refreshes all textures on resume');
     game.gpuFrame(); draw(); advance(17);
     gpu.info.scenes = false; draw();
     game.gpuFrame(); draw();
@@ -181,6 +208,9 @@ console.log('GPU driver failure fallback: passed');
     game.pixelFrame(); draw();
     assert.strictEqual(painting.scenes, false);
     assert(painting.images.has(1), 'software fallback publishes the complete game image');
+    showFps = true; draw();
+    assert.strictEqual(fpsLabel(), 'CPU | Game -- | Render -- FPS');
+    record.Recorder.prototype.text = text;
     events.exit();
 }
 console.log('GPU selection, reconnect while paused and software fallback: passed');

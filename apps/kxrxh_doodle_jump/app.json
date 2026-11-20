@@ -2,7 +2,7 @@
   "id": "kxrxh_doodle_jump",
   "title": "Doodle Jump",
   "description": "Doodle Jump for MGU7",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "vendor": "kxrxh",
   "loggingId": "OADJ",
   "maxDiskUsage": 536870912,
@@ -61,6 +61,12 @@
     }
   ],
   "settings": [
+    {
+      "key": "showFps",
+      "label": "Show FPS",
+      "type": "bool",
+      "default": false
+    },
     {
       "key": "parkedOnly",
       "label": "Parked only (pauses while driving)",
