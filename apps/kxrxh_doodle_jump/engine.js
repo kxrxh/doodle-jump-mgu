@@ -211,6 +211,11 @@ class Engine {
                 if (event.type === 'ready') this.ready = true;
                 else if (event.type === 'playing') this.playing = !!event.value;
                 else if (event.type === 'error') this.fail(new Error(event.message));
+                else if (event.type === 'timing') {
+                    if (![event.wallMs, event.cpuMs].every(v => Number.isFinite(v) && v >= 0))
+                        throw new Error('Invalid engine timing');
+                    this.frameTiming = event;
+                }
                 else if (event.type === 'dialog' && this.onDialog) this.onDialog(event);
                 else if (event.type === 'scenery') Object.assign(this.scenery,event);
             } else {
@@ -265,7 +270,7 @@ class Engine {
     send(command) { if (!this.dead && this.child && this.child.stdin.writable) this.child.stdin.write(JSON.stringify(command) + '\n'); }
     frame(command) {
         if (!this.ready || this.busy || this.dead) return false;
-        this.busy = true; this.send(Object.assign({ frame: true }, command)); return true;
+        this.frameTiming = null; this.busy = true; this.send(Object.assign({ frame: true }, command)); return true;
     }
     stop() { this.dead = true; if (this.child) this.child.kill(); }
 }

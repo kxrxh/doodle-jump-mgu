@@ -66,6 +66,13 @@ for (const body of bad) {
 }
 const oversizeHeader = engineWire(Buffer.alloc(0)); oversizeHeader.writeUInt32LE((64 << 20) + 1, 4);
 assert.throws(() => new PacketReader(() => {}).feed(oversizeHeader), /size/i);
+const sampleEvent = data => Buffer.from(JSON.stringify(Object.assign({type:'timing'}, data)));
+engine.packet('EVT1', sampleEvent({ wallMs:12.5, cpuMs:7 }));
+assert.strictEqual(engine.frameTiming.wallMs, 12.5);
+assert.throws(() => engine.packet('EVT1', sampleEvent({ wallMs:-1, cpuMs:7 })), /timing/);
+engine.ready = true; engine.busy = false;
+assert(engine.frame({}));
+assert.strictEqual(engine.frameTiming, null, 'a new request cannot inherit an older timing');
 console.log('GPU engine packet ownership and validation: passed');
 
 const client = new RenderClient('game', { info() {} }, { native:true });
@@ -131,7 +138,7 @@ console.log('GPU driver failure fallback: passed');
     const { Controls } = require('../apps/kxrxh_doodle_jump/controls');
     let now = 1000, seq = 0, draw, focus, game, painting, visible = true, full = true;
     const timers = new Map(), requests = [], events = {};
-    let showFps = false;
+    let showFps = false, paints = 0, kicks = 0, controllerInput, layoutChanged;
     const labels = [];
     const text = record.Recorder.prototype.text;
     record.Recorder.prototype.text = function(label, x, y, size, color, opts) {
@@ -159,10 +166,10 @@ console.log('GPU driver failure fallback: passed');
     }
     const ctx = {
         dataDir:'', log:{ info() {}, warn() {} }, settings:{ get(key) { return key === 'showFps' ? showFps : true; } },
-        ui:{ isVisible() { return visible; }, hasFocus() { return visible; }, text() {}, image(id, value) { painting = value; },
+        ui:{ isVisible() { return visible; }, hasFocus() { return visible; }, text() {}, image(id, value) { painting = value; paints++; },
             open() {}, onClick() {}, onFocus(fn) { focus = fn; } },
-        display:{ gpu, place:{ full:true }, active() { return full; }, own() { return false; } }, controller:{ grab() {}, onInput() {} }, signals:{ watch() {} },
-        hideButton() {}, loop(name, fps, fn) { draw = fn; }, canvas(w, h) {
+        display:{ gpu, place:{ full:true }, active() { return full; }, own() { return false; } }, controller:{ grab() {}, onInput(fn) { controllerInput = fn; } }, signals:{ watch() {} },
+        hideButton() {}, onLayout(fn) { layoutChanged = fn; }, loop(name, fps, fn) { draw = fn; return { kick() { kicks++; } }; }, canvas(w, h) {
             const cv = new record.Recorder(w, h); cv.place = { full, w:1920, h:720 }; return cv;
         },
     };
@@ -195,6 +202,26 @@ console.log('GPU driver failure fallback: passed');
     assert.strictEqual(fpsLabel(), 'GPU | Game 0 | Render -- FPS', 'stale renderer samples expire');
     showFps = false; labels.length = 0; draw();
     assert.strictEqual(fpsLabel(), undefined);
+    game.playing = true; showFps = true; draw();
+    advance(1001); draw();
+    game.gpuFrame(); advance(1);
+    assert.strictEqual(requests[requests.length-1].timing, true, 'sample an engine frame while Show FPS is enabled');
+    game.frameTiming = { wallMs:12, cpuMs:7 };
+    advance(32);
+    const beforeKick = kicks;
+    game.gpuFrame(); draw();
+    assert(kicks > beforeKick, 'a completed game frame wakes an idle renderer');
+    assert(labels.some(label => label === 'Engine 12 | CPU 7 | Trip 32 ms'), 'timings belong to one accepted request');
+    const firstPaint = paints;
+    for (let i=0;i<4;i++) { advance(16); draw(); }
+    assert.strictEqual(paints, firstPaint, 'ticks without a new game frame do not repaint the side panels');
+    controllerInput({frontRotaryEncoderDeflection:4}); draw();
+    assert.strictEqual(paints, firstPaint+1, 'steering feedback does not wait for a new frame');
+    layoutChanged(); draw();
+    assert.strictEqual(paints, firstPaint+2, 'a layout change repaints the current frame');
+    game.gpuFrame(); draw();
+    assert.strictEqual(paints, firstPaint+3, 'a new gameplay frame is presented');
+    game.playing = false; showFps = false;
     advance(17);
     assert.strictEqual(requests[1].gpu_reset, false, 'the same renderer session keeps its GPU textures');
     visible = false; focus(); gpu.generation++; draw();

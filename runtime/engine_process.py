@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import struct
 import sys
+import time
 
 from game import Game, ORIGINAL
 from input_state import Input
@@ -66,6 +67,12 @@ def run(original, data):
             reset = command.get('gpu_reset', False)
             if type(gpu) is not bool or type(reset) is not bool:
                 raise ValueError('Invalid GPU frame mode')
+            timing = command.get('timing', False)
+            if type(timing) is not bool:
+                raise ValueError('Invalid frame timing flag')
+            if timing:
+                wall = time.perf_counter_ns()
+                cpu = time.thread_time_ns()
             if gpu or gpu_mode:
                 game.graphics.begin_gpu_frame(gpu, reset)
             if gpu != gpu_mode:
@@ -84,11 +91,16 @@ def run(original, data):
                 playing = game.jni.playing
                 event(dict(type='playing', value=playing))
             if gpu:
-                packet(b'GPF1', game.graphics.gpu_frame())
+                kind, payload = b'GPF1', game.graphics.gpu_frame()
             else:
                 if encoder is None:
                     encoder = FrameEncoder(game.graphics.width, game.graphics.height)
-                packet(b'FRM2', encoder.encode(frame))
+                kind, payload = b'FRM2', encoder.encode(frame)
+            if timing:
+                event(dict(type='timing', wallMs=(time.perf_counter_ns()-wall)/1e6,
+                           cpuMs=(time.thread_time_ns()-cpu)/1e6))
+            packet(kind, payload)
+            del payload
     except BrokenPipeError:
         pass
     except BaseException as error:

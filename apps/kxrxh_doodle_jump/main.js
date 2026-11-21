@@ -20,15 +20,16 @@ mgu.run({
         let recorder = null, lastFrame = Date.now(), lastPaint = Date.now(), lastCcu = 0, touchSource = null, lastMenu = '';
         let frameTimer = null, nextFrameAt = lastFrame + 1000/60, sideWidth = Math.ceil((W-H*544/960)/2*960/H);
         let gpuEnabled = false, gpuSource = null, gpuGeneration = 0, gpuReset = false, submitted = null, frameMode = null;
-        let fpsSample = null;
+        let fpsSample = null, gameLoop = null;
+        let paintedFrame = -1, paintedSteering = 0, paintedFps = false;
         const controls = new Controls(() => engine.playing);
         const world = new World();
         engine.onFrame = (rgba, w, h, patches) => {
-            if (acceptFrame(false)) { setImage(IMAGE, w, h, rgba, patches); frameMode = 'pixels'; frames++; }
+            if (acceptFrame(false)) { setImage(IMAGE, w, h, rgba, patches); frameMode = 'pixels'; frameReady(); }
             queueFrame();
         };
         engine.onGPU = (data) => {
-            if (acceptFrame(true)) { setScene(data); frameMode = 'gpu'; frames++; }
+            if (acceptFrame(true)) { setScene(data); frameMode = 'gpu'; frameReady(); }
             queueFrame();
         };
         engine.onTexture = (id,w,h,rgba) => setImage(id,w,h,rgba);
@@ -59,7 +60,7 @@ mgu.run({
         function sync() {
             const go = shown() && !driving() && !error && !dialog;
             if (go !== going) {
-                going = go; controls.reset(); fpsSample = null;
+                going = go; controls.reset(); fpsSample = null; paintedFrame = -1;
                 ctx.controller.grab(go);
                 engine.send({ action: go ? 'resume' : 'pause' });
                 lastFrame = Date.now();
@@ -85,6 +86,16 @@ mgu.run({
             return submitted && submitted.gpu === gpu && gpuEnabled === gpu &&
                 (!gpu || (submitted.source === gpuSource && submitted.generation === gpuGeneration));
         }
+        function frameReady() {
+            frames++;
+            if (fpsSample && submitted.sample === fpsSample && engine.frameTiming) {
+                const now = Date.now(), trip = now - submitted.at;
+                if (trip >= 0) fpsSample.measurement = { at:now, trip,
+                    wall:Math.round(engine.frameTiming.wallMs), cpu:Math.round(engine.frameTiming.cpuMs) };
+            }
+            const gpu = ctx.display && ctx.display.gpu;
+            if (going && engine.playing && gameLoop && !(gpu && gpu.waiting)) gameLoop.kick();
+        }
         function queueFrame() {
             if (frameTimer !== null || !going || !engine.ready || engine.busy || engine.dead) return;
             // A completed engine frame need not wait for the next renderer tick.
@@ -96,8 +107,15 @@ mgu.run({
             updateGPU();
             const now = Date.now(), dt = Math.min(.1, Math.max(1/120, (now-lastFrame)/1000));
             const previous = submitted;
+            const command = Object.assign({ dt, side_width:sideWidth, gpu:gpuEnabled, gpu_reset:gpuReset }, controls.take());
             submitted = { gpu:gpuEnabled, source:gpuSource, generation:gpuGeneration };
-            if (engine.frame(Object.assign({ dt, side_width:sideWidth, gpu:gpuEnabled, gpu_reset:gpuReset }, controls.take()))) {
+            if (fpsSample && now >= fpsSample.nextTimingAt && settings.get('showFps')) {
+                command.timing = true;
+                submitted.at = now;
+                submitted.sample = fpsSample;
+            }
+            if (engine.frame(command)) {
+                if (command.timing) fpsSample.nextTimingAt = now + 1000;
                 gpuReset = false;
                 lastFrame = now;
                 nextFrameAt = Math.max(nextFrameAt + 1000/60, now);
@@ -141,7 +159,7 @@ mgu.run({
                 return;
             }
             if (!fpsSample || now < fpsSample.at) {
-                fpsSample = { start: now, at: now, frames, rate: '--' };
+                fpsSample = { start: now, at: now, nextTimingAt: now, frames, rate: '--' };
             }
             const elapsed = now - fpsSample.at;
             if (elapsed >= 1000) {
@@ -155,24 +173,37 @@ mgu.run({
             const label = mode + ' | Game ' + fpsSample.rate + ' | Render ' + (fresh ? stats.fps : '--') + ' FPS';
             const size = Math.min(22 * height / 720, side / 20);
             if (size < 9) return;
-            cv.fillRect(size / 2, size / 2, 18 * size, 2 * size, '#342b25');
+            const m = fpsSample.measurement;
+            const timed = m && now >= m.at && now - m.at < 2500;
+            cv.fillRect(size / 2, size / 2, 18 * size, (timed ? 3.5 : 2) * size, '#342b25');
             cv.text(label, size, 1.88 * size, size, '#ffffff', { literal: true });
+            if (timed) cv.text('Engine ' + m.wall + ' | CPU ' + m.cpu + ' | Trip ' + m.trip + ' ms',
+                size, 3.3 * size, size * .85, '#ffffff', { literal: true });
         }
-        ctx.loop('GAME', 60, () => {
+        if (ctx.onLayout) ctx.onLayout(() => { paintedFrame = -1; });
+        gameLoop = ctx.loop('GAME', 60, () => {
             sync(); connectTouch(); updateGPU();
             const now = Date.now();
+            queueFrame();
+            const steering = controls.steering(), showFps = settings.get('showFps');
+            // Between game frames the side panels can wait. Repaint input, layout and the watchdog promptly.
+            if (going && engine.playing && frameMode && paintedFrame === frames &&
+                steering === paintedSteering && showFps === paintedFps && now >= lastPaint && now-lastPaint < 1000) return;
+            paintedFrame = going && engine.playing ? frames : -1;
+            paintedSteering = steering;
+            paintedFps = showFps;
             const paintDt = Math.min(.1,Math.max(0,(now-lastPaint)/1000));
             lastPaint = now;
             const cv = ctx.canvas(W, H).clear('#fff3e3'), p = cv.place;
             controls.place = p;
             const sw = p && p.full ? p.w : W, sh = p && p.full ? p.h : H;
             sideWidth = Math.max(0,Math.min(2048,Math.ceil((sw-sh*544/960)/2*960/sh)));
-            controls.move(paintDt); queueFrame();
+            controls.move(paintDt);
             const message = error ? 'Engine stopped: ' + error.message : !frames ? 'Loading original Doodle Jump...' : null;
             if (p && p.full) {
                 if (!recorder || recorder.w !== p.w || recorder.h !== p.h) recorder = new Recorder(p.w, p.h);
                 recorder.reset();
-                world.draw(recorder,p.w,p.h,engine.scenery,controls.steering(),engine.playing,going?paintDt:0);
+                world.draw(recorder,p.w,p.h,engine.scenery,steering,engine.playing,going?paintDt:0);
                 const gw = p.h*544/960, gx = (p.w-gw)/2;
                 if (frameMode === 'gpu') recorder.scene(gx, 0, gw, p.h);
                 else if (frameMode === 'pixels') recorder.image(IMAGE, gx, 0, gw, p.h);
@@ -182,7 +213,7 @@ mgu.run({
                 cv.xf(1, 0, 0).append(recorder).xf();
             } else {
                 const gw = H*544/960;
-                world.draw(cv,W,H,engine.scenery,controls.steering(),engine.playing,going?paintDt:0);
+                world.draw(cv,W,H,engine.scenery,steering,engine.playing,going?paintDt:0);
                 if (frameMode === 'pixels') cv.image(IMAGE, (W-gw)/2, 0, gw, H);
                 if (message) cv.text(message, W/2, H/2, 24, '#573f2b', { align: 'center', font: 'bold' });
                 drawCursor(cv,W,H);

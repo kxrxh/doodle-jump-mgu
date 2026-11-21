@@ -27,15 +27,24 @@ class ProcessTests(unittest.TestCase):
         from game import ORIGINAL
 
         commands = [dict(frame=True, gpu=True, gpu_reset=True, side_width=0),
-                    dict(frame=True, gpu=True, side_width=0),
-                    dict(frame=True, gpu=False, side_width=0)]
+                    dict(frame=True, gpu=True, side_width=0, timing=True),
+                    dict(frame=True, gpu=False, side_width=0, timing=True)]
         output = SimpleNamespace(buffer=io.BytesIO())
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(engine_process, 'Audio', side_effect=lambda assets: Audio(assets, playback=False)), \
              patch.multiple(engine_process.sys, stdin=iter(json.dumps(c) + '\n' for c in commands),
                             stdout=output, stderr=io.StringIO()):
             engine_process.run(ORIGINAL, Path(directory))
-        frames = [(kind, data) for kind, data in self.packets(output.buffer.getvalue())
+        packets = self.packets(output.buffer.getvalue())
+        measured = []
+        for i, (kind, data) in enumerate(packets):
+            if kind == b'EVT1' and json.loads(data)['type'] == 'timing':
+                sample = json.loads(data)
+                self.assertGreaterEqual(sample['wallMs'], 0)
+                self.assertGreaterEqual(sample['cpuMs'], 0)
+                measured.append(packets[i + 1][0])
+        self.assertEqual(measured, [b'GPF1', b'FRM2'])
+        frames = [(kind, data) for kind, data in packets
                   if kind in (b'GPF1', b'FRM2')]
         self.assertEqual([kind for kind, _ in frames], [b'GPF1', b'GPF1', b'FRM2'])
         for _, data in frames[:2]:
