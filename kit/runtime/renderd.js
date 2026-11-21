@@ -197,7 +197,7 @@ class RenderClient extends EventEmitter {
             if (type === X.READY && p.length >= 12) {
                 const caps = p.readUInt32LE(8);
                 this.native = true;
-                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8), scenes:!!(caps & 256) };
+                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8), scenes:p.length >= 56 && p.toString('latin1', 52, 56) === 'GPF1' };
             } else if (type === E.READY) {
                 this.ready = true; this.errLogged = false; this.stats = null;
                 this.generation++;

@@ -74,7 +74,7 @@ mgu.run({
         }
         function updateGPU() {
             const display = ctx.display, gpu = display && display.gpu;
-            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && display.own && display.own());
+            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && display.place && display.place.full && display.active('GAME'));
             const source = enabled ? gpu : null, generation = enabled ? gpu.generation : 0;
             if (enabled === gpuEnabled && source === gpuSource && generation === gpuGeneration) return;
             gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation;

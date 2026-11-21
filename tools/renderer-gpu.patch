@@ -28,37 +28,30 @@ index e23824e..5dd467c 100644
  	LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless build/$(OUT)/test_embed build/$(OUT)/mock_hmi
  	sh test/replay.sh build/$(OUT)
 diff --git a/native/mgu-render/PROTOCOL.md b/native/mgu-render/PROTOCOL.md
-index 9e346ac..5a61d65 100644
+index 80a0e31..21e486f 100644
 --- a/native/mgu-render/PROTOCOL.md
 +++ b/native/mgu-render/PROTOCOL.md
-@@ -118,12 +118,14 @@ Client to daemon:
+@@ -118,6 +118,8 @@ Client to daemon:
  | 0x4d520004 | X_PIXELS | u32 id, n (1..64), n × u32 x, y, w, h, then each rect's pixels in turn, rows top-down, packed (w × 1 or 4 bytes a row) |
  | 0x4d520005 | X_PALETTE | u32 id, 768 bytes RGB: an INDEX8 pixmap's colours, for the whole picture from now on |
  | 0x4d520006 | X_FINGERS | u32 on: every finger of a gesture in the app's claims comes as X_FINGER, with its id; TOUCH no longer comes. Off by default |
-+| 0x4d520007 | X_SCENE_TEXTURE | u32 token, w, h, then w×h RGBA8 bytes, rows top-down. Sides 1..2048; w=h=0 deletes the token |
-+| 0x4d520008 | X_SCENE | u32 w, h (1..2048), then the scene commands below |
++| 0x4d520007 | X_SCENE_TEXTURE | u32 token, w, h, then RGBA8 bytes. Zero dimensions delete the texture |
++| 0x4d520008 | X_SCENE | u32 w, h, then the scene commands below |
  
  Daemon to client:
  
- | Type | Name | Payload |
- |---|---|---|
--| 0x4d520101 | X_READY | u32 version (1), modes (bit 0 layer, bit 1 embed: offered now), caps (1 touch routing, 2 controller gate loaded in the HMI and its event socket ours or free, 4 front gate, 8 pixmaps, 16 video, 32 embed frames drawn zero-copy, 64 X_FINGERS, 128 the loaded gate holds only the parts X_GRAB's hold names), i32 embed box x, y, w, h (0 when no embed), i32 app area x, y, w, h, u32 largest pixmap side, refresh mHz |
-+| 0x4d520101 | X_READY | u32 version (1), modes (bit 0 layer, bit 1 embed: offered now), caps (1 touch routing, 2 controller gate loaded in the HMI and its event socket ours or free, 4 front gate, 8 pixmaps, 16 video, 32 embed frames drawn zero-copy, 64 X_FINGERS, 128 the loaded gate holds only the parts X_GRAB's hold names, 256 GPU scenes), i32 embed box x, y, w, h (0 when no embed), i32 app area x, y, w, h, u32 largest pixmap side, refresh mHz |
- | 0x4d520102 | X_STATE | u32 mode, on screen, in front (the HMI shows the app's screen); sent whenever one changes |
- | 0x4d520103 | X_CCU | as upstream's CCU |
- | 0x4d520104 | X_FINGER | u32 phase (1 down, 2 move, 3 up, 4 cancel), u32 finger id (0..15, the display's), f32 x, y logical px: one finger of a gesture that began in a claim (after X_FINGERS 1). Cancel: the finger's lift was never seen and it is gone (x, y where it was last): drop it without acting on it, never as a tap or a release there |
 @@ -133,6 +135,46 @@ pixmaps count towards 64 per app and 96 MiB for all apps; pictures also
  towards 32 MiB per app. An upload past them gets an ERROR and draws nothing.
  Videos have limits of their own (below).
  
 +## GPU scenes
 +
-+Available only with capability 256. A scene keeps an original game's GLES
++Available when X_READY carries the four ASCII bytes GPF1 at offset 52. A scene keeps an original game's GLES
 +draws on the GPU, in a private RGBA8 framebuffer. X_SCENE replaces its draw
 +list; op 20 (`SCENE x y w h version`) draws the result in the app's frame,
 +with its placement, clip and global alpha. The version is a client-side
 +change marker. Scenes are not drawn in cached layers. A driver that cannot
-+compile the scene shaders offers no capability 256; ordinary drawing stays
++compile the scene shaders omits this marker; ordinary drawing stays
 +available.
 +
 +Texture tokens are separate from picture IDs and belong to the client.
@@ -95,7 +88,7 @@ index 9e346ac..5a61d65 100644
  
  IterioDev's protocol 4, the same in the iterio and native dialects. Another
 diff --git a/native/mgu-render/src/gfx.c b/native/mgu-render/src/gfx.c
-index 161b222..fe16540 100644
+index 2c19032..382320a 100644
 --- a/native/mgu-render/src/gfx.c
 +++ b/native/mgu-render/src/gfx.c
 @@ -23,6 +23,7 @@
@@ -106,7 +99,7 @@ index 161b222..fe16540 100644
  
  enum { K_BOX = 0, K_RRECT = 1, K_ARC = 3, K_LINE = 4, K_GLYPH = 5, K_TEX = 6, K_VCOL = 7, K_RAMPRECT = 8, K_QUAD = 9, K_IMG = 10, K_YUV = 11 };
  
-@@ -151,6 +152,7 @@ static GLuint shader(GLenum t, const char *src) {
+@@ -152,6 +153,7 @@ static GLuint shader(GLenum t, const char *src) {
  }
  
  int gfx_init(void) {
@@ -114,7 +107,7 @@ index 161b222..fe16540 100644
      GLuint vs = shader(GL_VERTEX_SHADER, VS), fs = shader(GL_FRAGMENT_SHADER, FS);
      if (!vs || !fs) return -1;
      prog = glCreateProgram();
-@@ -599,6 +601,7 @@ static void video_update(gfx_client *c, gfx_video *v) {
+@@ -604,6 +606,7 @@ static void video_update(gfx_client *c, gfx_video *v) {
  }
  
  void gfx_client_free(gfx_client *c) {
@@ -122,7 +115,7 @@ index 161b222..fe16540 100644
      while (c->layers) gfx_layer_drop(c, c->layers->id);
      while (c->images) gfx_image_drop(c, c->images->id);
      while (c->videos) gfx_video_drop(c, c->videos->id);
-@@ -617,6 +620,19 @@ void gfx_client_free(gfx_client *c) {
+@@ -622,6 +625,19 @@ void gfx_client_free(gfx_client *c) {
      c->natlas = c->nramp = 0;
  }
  
@@ -142,7 +135,7 @@ index 161b222..fe16540 100644
  /* ---------------- batching ---------------- */
  
  static vert *push4(void) {
-@@ -1036,6 +1052,23 @@ static void run(gfx_client *c, const gfx_xf *xf0, const uint32_t *cmd, size_t n,
+@@ -1041,6 +1057,23 @@ static void run(gfx_client *c, const gfx_xf *xf0, const uint32_t *cmd, size_t n,
              i += 6;
              break;
          }
@@ -167,10 +160,10 @@ index 161b222..fe16540 100644
              NEED(4);
              flush();
 diff --git a/native/mgu-render/src/gfx.h b/native/mgu-render/src/gfx.h
-index 7ae05ae..f426317 100644
+index 19d2435..9069efe 100644
 --- a/native/mgu-render/src/gfx.h
 +++ b/native/mgu-render/src/gfx.h
-@@ -69,9 +69,13 @@ typedef struct gfx_client {
+@@ -70,9 +70,13 @@ typedef struct gfx_client {
      int nvideo;
      size_t video_bytes;                   /* GFX_VIDEO_BYTES */
      const char *name;                     /* the app, for the log */
@@ -185,20 +178,21 @@ index 7ae05ae..f426317 100644
  int gfx_atlas(gfx_client *c, uint32_t id, int w, int h, const uint8_t *alpha);
  int gfx_ramp(gfx_client *c, uint32_t id, int n, const uint32_t *cols);
 diff --git a/native/mgu-render/src/main.c b/native/mgu-render/src/main.c
-index 6744b7c..f2f9711 100644
+index 5441972..8222b71 100644
 --- a/native/mgu-render/src/main.c
 +++ b/native/mgu-render/src/main.c
-@@ -1007,7 +1007,8 @@ static void hello(client *c, const uint8_t *p, uint32_t len) {
-         c->dialect = DIALECT_NATIVE;
-         int emb = embed_available(), area[4], ctl = ccu_free() ? ctl_gate_loaded() : 0;
-         app_area(area);
--        uint32_t caps = CAP_PIXMAP | CAP_VIDEO | (touch_on ? CAP_TOUCH_ROUTE : 0) | (cfg.foreground_gate[0] ? CAP_FRONT_GATE : 0) |
-+        uint32_t caps = CAP_PIXMAP | CAP_VIDEO | (gfx_scene_supported() ? CAP_SCENE : 0) |
-+                        (touch_on ? CAP_TOUCH_ROUTE : 0) | (cfg.foreground_gate[0] ? CAP_FRONT_GATE : 0) |
-                         (ctl ? CAP_CONTROLLER : 0) | (ctl == 2 ? CAP_CONTROLLER_HOLD : 0) | (emb && embed_zero_copy() ? CAP_EMBED_ZERO_COPY : 0) |
-                         (touch_on ? CAP_FINGERS : 0);
-         /* a gate that cannot tell which app is in front would never show the app: no mode, the app keeps its own screens */
-@@ -1239,6 +1240,18 @@ static int handle(client *c, uint32_t type, const uint8_t *p, uint32_t len) {
+@@ -1013,7 +1013,9 @@ static void hello(client *c, const uint8_t *p, uint32_t len) {
+         uint32_t x[15] = { MGU_NATIVE_VERSION, modes, caps };
+         for (int k = 0; k < 4; k++) { x[3 + k] = emb ? (uint32_t)cfg.embed_area[k] : 0; x[7 + k] = (uint32_t)area[k]; }
+         x[11] = GFX_PIXMAP_SIDE; x[12] = (uint32_t)refresh_mhz;
+-        send_msg(c, X_READY, x, 13 * 4);
++        /* Private Doodle Jump extension after the upstream X_READY fields. */
++        x[13] = 0x31465047; /* GPF1 */
++        send_msg(c, X_READY, x, gfx_scene_supported() ? 14 * 4 : 13 * 4);
+     }
+     int listed_root = c->uid == 0 && listed(cfg.overlay_apps, c->app);
+     c->overlay = listed_root && idrive8();
+@@ -1237,6 +1239,18 @@ static int handle(client *c, uint32_t type, const uint8_t *p, uint32_t len) {
          make_current_any(c);
          if (gfx_pixmap_palette(&c->g, w[0], p + 4) < 0) send_error(c, gfx_error());
          return 0;
@@ -218,10 +212,10 @@ index 6744b7c..f2f9711 100644
          return 0;
      }
 diff --git a/native/mgu-render/src/proto.h b/native/mgu-render/src/proto.h
-index b5ed7a4..d5944b0 100644
+index 219b33d..e2c68aa 100644
 --- a/native/mgu-render/src/proto.h
 +++ b/native/mgu-render/src/proto.h
-@@ -85,6 +85,8 @@ enum {
+@@ -88,6 +88,8 @@ enum {
                                 packed (w * bytes per pixel per row), the whole padded to 4 */
      X_PALETTE = 0x4d520005, /* u32 id, 256 * 3 bytes RGB: an INDEX8 pixmap's colours, for the whole picture */
      X_FINGERS = 0x4d520006, /* u32 on: every finger of a gesture in a claim comes as X_FINGER, instead of TOUCH */
@@ -230,15 +224,7 @@ index b5ed7a4..d5944b0 100644
  };
  
  /* pixmap formats */
-@@ -137,6 +139,7 @@ enum {
-     CAP_EMBED_ZERO_COPY = 32, /* embed frames are drawn straight into the HMI compositor's GPU buffers (no readback) */
-     CAP_FINGERS = 64,       /* X_FINGERS: every finger, with its id (X_FINGER) */
-     CAP_CONTROLLER_HOLD = 128, /* the loaded gate holds only the parts X_GRAB's hold names (else all three) */
-+    CAP_SCENE = 256,         /* X_SCENE_TEXTURE / X_SCENE / OP_SCENE */
- };
- 
- /* X_GRAB's hold: the parts of the controller the HMI doesn't get while the app grabs it */
-@@ -170,6 +173,7 @@ enum {
+@@ -174,6 +176,7 @@ enum {
                           iterio, native: x y w h r id  picture (or pixmap) over the rect, corner radius r */
      OP_VIDEO = 19,    /* iterio, native: x y w h r id  video id's newest frame fitted into the rect (aspect kept, centred),
                           corner radius r; no frame yet: nothing drawn; not in layers (they are drawn once) */

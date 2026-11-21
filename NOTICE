@@ -50,10 +50,10 @@ See kit/LICENSE and kit/LICENSE.mgu-renderd.
 
 The separately installed doodle-gpu renderer add-on is based on mgu-store:
 https://github.com/robertnisipeanu/mgu-store
-Revision: 7956321fd40bceafffa8842719155e6176652720
+Revision: 3ecfafd4b6b2492c1776f53e3b74add5653c5c61
 It retains the Store's GPL-3.0 license and the original renderer's MIT notice
 as LICENSE.store and LICENSE.mgu-renderd. Its complete modified renderer sources
-ship alongside the binary as doodle-gpu-source-1.0.0.tar.gz; the pinned build recipe
+ship alongside the binary as doodle-gpu-source-1.0.1.tar.gz; the pinned build recipe
 and patch are in tools/build_gpu_renderer.py and tools/renderer-gpu.patch.
 
 Source builds download and verify the original APK and game assets. Ready app

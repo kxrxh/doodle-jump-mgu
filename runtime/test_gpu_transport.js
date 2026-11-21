@@ -71,7 +71,10 @@ console.log('GPU engine packet ownership and validation: passed');
 const client = new RenderClient('game', { info() {} }, { native:true });
 const sent = []; client._write = data => { sent.push(Buffer.from(data)); return true; };
 const ready = Buffer.alloc(16); ready.writeUInt32LE(1, 0); ready.writeUInt32LE(1920, 4); ready.writeUInt32LE(720, 8);
-const nativeReady = Buffer.alloc(12); nativeReady.writeUInt32LE(1, 0); nativeReady.writeUInt32LE(1, 4); nativeReady.writeUInt32LE(264, 8);
+const nativeReady = Buffer.alloc(56); nativeReady.writeUInt32LE(1, 0); nativeReady.writeUInt32LE(1, 4); nativeReady.writeUInt32LE(264, 8);
+client._data(message(0x4d520101, nativeReady.slice(0, 52)));
+assert.strictEqual(client.info.scenes, false, 'stock 0.6.25 advertises NV12, not game scenes');
+nativeReady.write('GPF1', 52, 'ascii');
 client._data(message(0x4d520101, nativeReady)); client._data(message(101, ready));
 assert.strictEqual(client.info.scenes, true);
 assert.strictEqual(client.generation, 1);
@@ -158,7 +161,7 @@ console.log('GPU driver failure fallback: passed');
         dataDir:'', log:{ info() {}, warn() {} }, settings:{ get(key) { return key === 'showFps' ? showFps : true; } },
         ui:{ isVisible() { return visible; }, hasFocus() { return visible; }, text() {}, image(id, value) { painting = value; },
             open() {}, onClick() {}, onFocus(fn) { focus = fn; } },
-        display:{ gpu, own() { return full; } }, controller:{ grab() {}, onInput() {} }, signals:{ watch() {} },
+        display:{ gpu, place:{ full:true }, active() { return full; }, own() { return false; } }, controller:{ grab() {}, onInput() {} }, signals:{ watch() {} },
         hideButton() {}, loop(name, fps, fn) { draw = fn; }, canvas(w, h) {
             const cv = new record.Recorder(w, h); cv.place = { full, w:1920, h:720 }; return cv;
         },

@@ -61,7 +61,7 @@ class GpuCheckTests(unittest.TestCase):
             return result, bytes(received)
 
     def test_fragmented_capability_and_ready_answer_pass_without_showing_a_surface(self):
-        data = packet(0x4d520101, 1, 6, 256) + packet(101, 4, 1920, 720, 1)
+        data = packet(0x4d520101, 1, 6, 256, *([0]*10), 0x31465047) + packet(101, 4, 1920, 720, 1)
         result, sent = self.probe([data[:3], data[3:19], data[19:]])
         self.assertEqual(result.returncode, 0, result.stderr)
         kind, size = struct.unpack_from('<II', sent)
@@ -70,7 +70,8 @@ class GpuCheckTests(unittest.TestCase):
         self.assertIn(b'\0proto=mgu-render/1', sent[8:])
 
     def test_missing_capability_truncated_answer_and_silence_fail(self):
-        cases = [([packet(0x4d520101, 1, 6, 8) + packet(101, 4, 1920, 720, 1)], True, 'GPU scenes'),
+        cases = [([packet(0x4d520101, 1, 6, 256, *([0]*10)) + packet(101, 4, 1920, 720, 1)], True, 'GPU scenes'),
+                 ([packet(0x4d520101, 1, 6, 8) + packet(101, 4, 1920, 720, 1)], True, 'GPU scenes'),
                  ([packet(0x4d520101, 1, 6, 256)[:-1]], True, 'closed'),
                  ([struct.pack('<II', 101, 0x1000000)], False, 'large'),
                  ([], False, 'timeout')]

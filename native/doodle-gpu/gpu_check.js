@@ -35,7 +35,7 @@ if (process.argv[2] === '--removed') {
             const body = buffer.slice(8, 8 + size);
             buffer = buffer.slice(8 + size);
             if (kind === 0x4d520101) {
-                if (size < 12 || body.readUInt32LE(0) !== 1 || !(body.readUInt32LE(8) & 256))
+                if (size < 56 || body.readUInt32LE(0) !== 1 || body.toString('latin1', 52, 56) !== 'GPF1')
                     return done('Renderer does not support GPU scenes');
                 supported = true;
             } else if (kind === 101) {

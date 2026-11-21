@@ -2,6 +2,7 @@
 import gzip
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -78,8 +79,9 @@ def main():
     extract(source, checkout)
     source = checkout / ('mgu-store-' + config['commit'])
     patch = ROOT / 'tools/renderer-gpu.patch'
-    subprocess.run(['git', 'apply', '--check', str(patch)], cwd=source, check=True)
-    subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True)
+    # The extracted archive lives inside this repository. Apply from its own root.
+    subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True,
+                   env=dict(os.environ, GIT_CEILING_DIRECTORIES=str(source.parent)))
     subprocess.run(['make', 'check-target'], cwd=source / 'native/mgu-render', check=True)
     for path in package(source):
         print(path)
