@@ -75,7 +75,7 @@ mgu.run({
         }
         function updateGPU() {
             const display = ctx.display, gpu = display && display.gpu;
-            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && display.place && display.place.full && display.active('GAME'));
+            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && display.active('GAME'));
             const source = enabled ? gpu : null, generation = enabled ? gpu.generation : 0;
             if (enabled === gpuEnabled && source === gpuSource && generation === gpuGeneration) return;
             gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation;
@@ -175,10 +175,18 @@ mgu.run({
             if (size < 9) return;
             const m = fpsSample.measurement;
             const timed = m && now >= m.at && now - m.at < 2500;
-            cv.fillRect(size / 2, size / 2, 18 * size, (timed ? 3.5 : 2) * size, '#342b25');
+            let reason = '';
+            if (mode === 'CPU') {
+                if (!renderer || !renderer.ready) reason = 'No active renderer';
+                else if (!renderer.native) reason = 'Legacy renderer';
+                else if (renderer.info && renderer.info.shaderFailed) reason = 'GPU shader unavailable';
+                else reason = renderer.info && renderer.info.sceneFailed ? 'GPU scene rejected' : 'GPU scenes unavailable';
+            }
+            cv.fillRect(size / 2, size / 2, 18 * size, ((timed ? 3.5 : 2) + (reason ? 1.5 : 0)) * size, '#342b25');
             cv.text(label, size, 1.88 * size, size, '#ffffff', { literal: true });
             if (timed) cv.text('Engine ' + m.wall + ' | CPU ' + m.cpu + ' | Trip ' + m.trip + ' ms',
                 size, 3.3 * size, size * .85, '#ffffff', { literal: true });
+            if (reason) cv.text(reason, size, (timed ? 4.75 : 3.3) * size, size * .85, '#ffffff', { literal: true });
         }
         if (ctx.onLayout) ctx.onLayout(() => { paintedFrame = -1; });
         gameLoop = ctx.loop('GAME', 60, () => {
@@ -214,7 +222,8 @@ mgu.run({
             } else {
                 const gw = H*544/960;
                 world.draw(cv,W,H,engine.scenery,steering,engine.playing,going?paintDt:0);
-                if (frameMode === 'pixels') cv.image(IMAGE, (W-gw)/2, 0, gw, H);
+                if (frameMode === 'gpu' && p) cv.scene((W-gw)/2, 0, gw, H);
+                else if (frameMode === 'pixels') cv.image(IMAGE, (W-gw)/2, 0, gw, H);
                 if (message) cv.text(message, W/2, H/2, 24, '#573f2b', { align: 'center', font: 'bold' });
                 drawCursor(cv,W,H);
                 drawFps(cv, (W-gw)/2, H, now, p && ctx.display.gpu);

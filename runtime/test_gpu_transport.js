@@ -2,7 +2,9 @@
 const assert = require('assert');
 const { Engine, PacketReader } = require('../apps/kxrxh_doodle_jump/engine');
 const record = require('../kit/runtime/record');
-const { RenderClient } = require('../kit/runtime/renderd');
+const { RenderClient, SOCKETS } = require('../kit/runtime/renderd');
+assert.deepStrictEqual(SOCKETS, process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] :
+    ['/run/mgu-render/render.sock', '/run/mgu-renderd/renderd.sock'], 'prefer the socket checked by the Store GPU add-on');
 const TX = 0x4d520007, SCENE = 0x4d520008;
 function message(type, body) {
     const header = Buffer.alloc(8); header.writeUInt32LE(type, 0); header.writeUInt32LE(body.length, 4);
@@ -81,6 +83,10 @@ const ready = Buffer.alloc(16); ready.writeUInt32LE(1, 0); ready.writeUInt32LE(1
 const nativeReady = Buffer.alloc(56); nativeReady.writeUInt32LE(1, 0); nativeReady.writeUInt32LE(1, 4); nativeReady.writeUInt32LE(264, 8);
 client._data(message(0x4d520101, nativeReady.slice(0, 52)));
 assert.strictEqual(client.info.scenes, false, 'stock 0.6.25 advertises NV12, not game scenes');
+nativeReady.write('GPF0', 52, 'ascii');
+client._data(message(0x4d520101, nativeReady));
+assert.strictEqual(client.info.scenes, false);
+assert.strictEqual(client.info.shaderFailed, true, 'identify a loaded add-on whose scene shader could not start');
 nativeReady.write('GPF1', 52, 'ascii');
 client._data(message(0x4d520101, nativeReady)); client._data(message(101, ready));
 assert.strictEqual(client.info.scenes, true);
@@ -95,6 +101,10 @@ assert.strictEqual(parent.scenes, true, 'appending the fullscreen recorder keeps
 assert.strictEqual(parent.words()[0], 20);
 const floats = new Float32Array(parent.words().buffer, parent.words().byteOffset, parent.words().length);
 assert.deepStrictEqual(Array.from(floats.slice(1, 5)), [600, 0, 408, 720]);
+let rectangles = 0;
+const overlay = new record.Recorder(1920, 720).append(first).fillRect(0, 0, 20, 10, '#fff');
+record.play(overlay.words(), { fillRect() { rectangles++; } });
+assert.strictEqual(rectangles, 1, 'software playback preserves overlays after a GPU-only scene');
 assert(client.frame(parent));
 assert.deepStrictEqual(sent.map(b => b.readUInt32LE(0)), [TX, SCENE, TX, 7], 'upload textures, replace scene, retire old textures, then present');
 assert.deepStrictEqual(sent[0], texture(7, [1, 2, 3, 255]));
@@ -123,11 +133,19 @@ const stale = new record.Recorder(1920, 720).scene(600, 0, 408, 720);
 client._data(message(101, ready));
 assert.strictEqual(client.stats, null, 'a new connection starts without old FPS data');
 assert.strictEqual(client.frame(stale), false, 'a reconnect cannot publish a cached scene before the app refreshes its textures');
+record.setScene(frame());
+const generation = client.generation;
+client.place({ x:10, y:20, w:1920, h:720, scale:.9, ox:0, oy:0 });
+assert.strictEqual(client.generation, generation, 'moving a surface keeps its GPU resources');
+client.place({ x:10, y:20, w:1790, h:638, scale:.9, ox:0, oy:0 });
+assert.strictEqual(client.generation, generation + 1, 'resizing invalidates GPU textures held by the renderer');
+assert.strictEqual(client.frame(stale), false, 'no obsolete scene is sent while waiting for a fresh texture set');
 console.log('GPU capability, resource lifetime and presentation: passed');
 
 client.log.warn = () => {};
 record.setScene(frame());
 client._data(message(103, Buffer.from('scene GPU: framebuffer allocation failed')));
+assert.strictEqual(client.info.sceneFailed, true);
 assert.strictEqual(client.info.scenes, false, 'GPU driver failures switch this session to software');
 assert.strictEqual(client.ready, true, 'software fallback keeps the existing display connection');
 assert.strictEqual(record.sceneState.frame, null, 'failed scenes release pending texture packets');
@@ -168,7 +186,7 @@ console.log('GPU driver failure fallback: passed');
         dataDir:'', log:{ info() {}, warn() {} }, settings:{ get(key) { return key === 'showFps' ? showFps : true; } },
         ui:{ isVisible() { return visible; }, hasFocus() { return visible; }, text() {}, image(id, value) { painting = value; paints++; },
             open() {}, onClick() {}, onFocus(fn) { focus = fn; } },
-        display:{ gpu, place:{ full:true }, active() { return full; }, own() { return false; } }, controller:{ grab() {}, onInput(fn) { controllerInput = fn; } }, signals:{ watch() {} },
+        display:{ gpu, place:{ full:true }, active() { return visible; }, own() { return false; } }, controller:{ grab() {}, onInput(fn) { controllerInput = fn; } }, signals:{ watch() {} },
         hideButton() {}, onLayout(fn) { layoutChanged = fn; }, loop(name, fps, fn) { draw = fn; return { kick() { kicks++; } }; }, canvas(w, h) {
             const cv = new record.Recorder(w, h); cv.place = { full, w:1920, h:720 }; return cv;
         },
@@ -230,6 +248,12 @@ console.log('GPU driver failure fallback: passed');
     visible = true; focus(); draw(); advance(17);
     assert.strictEqual(requests[requests.length - 1].gpu_reset, true, 'a renderer reconnect while paused refreshes all textures on resume');
     game.gpuFrame(); draw(); advance(17);
+    full = false;
+    ctx.display.place.full = false;
+    draw(); game.gpuFrame(); draw();
+    assert(painting.scenes, 'the native renderer can composite scenes inside the standard HMI viewport');
+    advance(17);
+    assert(requests[requests.length - 1].gpu, 'a page placement keeps GPU game capture enabled');
     gpu.info.scenes = false; draw();
     game.gpuFrame(); draw();
     assert.strictEqual(painting.scenes, false, 'loss of the renderer capability immediately removes native scene commands');
@@ -240,6 +264,13 @@ console.log('GPU driver failure fallback: passed');
     assert(painting.images.has(1), 'software fallback publishes the complete game image');
     showFps = true; draw();
     assert.strictEqual(fpsLabel(), 'CPU | Game -- | Render -- FPS');
+    assert(labels.includes('GPU scenes unavailable'));
+    gpu.info.sceneFailed = true; draw();
+    assert.strictEqual(labels[labels.length - 1], 'GPU scene rejected');
+    gpu.info = { scenes:false, shaderFailed:true }; draw();
+    assert.strictEqual(labels[labels.length - 1], 'GPU shader unavailable');
+    gpu.native = false; draw();
+    assert.strictEqual(labels[labels.length - 1], 'Legacy renderer');
     record.Recorder.prototype.text = text;
     events.exit();
 }

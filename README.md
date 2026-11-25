@@ -19,6 +19,6 @@ To update, refresh the source in Store and install the latest version.
 
 Touch controls work without extra tools. iDrive controller support depends on your setup.
 
-Enable **Show FPS** in the game’s main menu to see the drawing mode (GPU or CPU), completed game frames per second, and the frame rate reported by the Store renderer. The second line samples one frame per second and shows engine elapsed time, engine thread CPU time, and the full request round trip in milliseconds.
+Enable **Show FPS** in the main menu to see how fast the game runs. The first word shows the drawing mode. In CPU mode, the last line explains why GPU drawing is unavailable.
 
 ![Gameplay](docs/screenshots/gameplay.png)

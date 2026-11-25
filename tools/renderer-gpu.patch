@@ -46,7 +46,7 @@ index 80a0e31..21e486f 100644
  
 +## GPU scenes
 +
-+Available when X_READY carries the four ASCII bytes GPF1 at offset 52. A scene keeps an original game's GLES
++X_READY at offset 52 carries GPF1 when ready or GPF0 if the shader failed. A scene keeps an original game's GLES
 +draws on the GPU, in a private RGBA8 framebuffer. X_SCENE replaces its draw
 +list; op 20 (`SCENE x y w h version`) draws the result in the app's frame,
 +with its placement, clip and global alpha. The version is a client-side
@@ -187,8 +187,8 @@ index 5441972..8222b71 100644
          x[11] = GFX_PIXMAP_SIDE; x[12] = (uint32_t)refresh_mhz;
 -        send_msg(c, X_READY, x, 13 * 4);
 +        /* Private Doodle Jump extension after the upstream X_READY fields. */
-+        x[13] = 0x31465047; /* GPF1 */
-+        send_msg(c, X_READY, x, gfx_scene_supported() ? 14 * 4 : 13 * 4);
++        x[13] = gfx_scene_supported() ? 0x31465047 : 0x30465047; /* GPF1 ready, GPF0 shader unavailable */
++        send_msg(c, X_READY, x, 14 * 4);
      }
      int listed_root = c->uid == 0 && listed(cfg.overlay_apps, c->app);
      c->overlay = listed_root && idrive8();

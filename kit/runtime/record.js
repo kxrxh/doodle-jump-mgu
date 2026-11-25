@@ -387,6 +387,7 @@ function play(words, real) {
             i += k * 8; break;
         }
         case OP.LAYER: { const L = layerById.get(u[i]); if (L) cv.blit(softLayer(L), f[i + 1], f[i + 2]); i += 3; break; }
+        case OP.SCENE: i += 5; break; // GPU-only surface. Keep drawing the surrounding UI.
         case OP.IMAGE: { const im = imageById.get(u[i]); if (im && cv.drawImage) cv.drawImage(im.data, im.w, im.h, f[i + 2], f[i + 3], f[i + 4], f[i + 5]); i += 6; break; }
         case OP.CLIP: clip = [f[i], f[i + 1], f[i + 2], f[i + 3]]; i += 4; break;     // (software path: ignored)
         case OP.NOCLIP: clip = null; break;

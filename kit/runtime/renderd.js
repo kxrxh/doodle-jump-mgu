@@ -24,7 +24,7 @@ const rec = require('./record');
 
 // the Store's renderer (mgu-render) first, then the community socket (an older renderer, or mgu-render's
 // link): an older renderer still installed beside mgu-render never gets the apps
-const SOCKETS = process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] : ['/run/mgu-renderd/renderd.sock', '/run/mgu-render/render.sock'];
+const SOCKETS = process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] : ['/run/mgu-render/render.sock', '/run/mgu-renderd/renderd.sock'];
 const SOCKET = SOCKETS[0];
 const isSocket = (p) => { try { return fs.statSync(p).isSocket(); } catch (e) { return false; } };
 const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, DROP_LAYER: 8, IMAGE: 9, GRAB: 10 };
@@ -196,8 +196,9 @@ class RenderClient extends EventEmitter {
             this.inbuf = this.inbuf.slice(8 + len);
             if (type === X.READY && p.length >= 12) {
                 const caps = p.readUInt32LE(8);
+                const marker = p.length >= 56 ? p.toString('latin1', 52, 56) : '';
                 this.native = true;
-                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8), scenes:p.length >= 56 && p.toString('latin1', 52, 56) === 'GPF1' };
+                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8), scenes:marker === 'GPF1', shaderFailed:marker === 'GPF0' };
             } else if (type === E.READY) {
                 this.ready = true; this.errLogged = false; this.stats = null;
                 this.generation++;
@@ -245,6 +246,7 @@ class RenderClient extends EventEmitter {
                 const error = p.toString();
                 if (error.indexOf('scene GPU:') === 0 && this.info) {
                     this.info.scenes = false;
+                    this.info.sceneFailed = true;
                     rec.clearScene();
                 }
                 this.log.warn('renderd error: ' + error);
@@ -263,8 +265,13 @@ class RenderClient extends EventEmitter {
         this.placement = Object.assign({}, pl);
         // as the renderer: a new size drops all the app's resources, a new scale keeps them but the layers drawn at
         // the old one (sent again, they replace those)
-        if (resize) this._reset();
-        else if (scaleChanged) { this.sent.layer.clear(); this.waiting = false; }
+        if (resize) {
+            this._reset();
+            if (this.ready && this.info && this.info.scenes) {
+                this.generation++;
+                rec.clearScene();
+            }
+        } else if (scaleChanged) { this.sent.layer.clear(); this.waiting = false; }
         if (this.ready) this._sendPlace();
     }
     _sendPlace() {

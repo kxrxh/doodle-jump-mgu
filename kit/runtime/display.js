@@ -737,7 +737,7 @@ class Display {
         const words = new Uint32Array(r.words());
         this.last = {
             name, softImage, w: r.w, h: r.h,
-            frame: { words: () => words, atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []) },
+            frame: { words: () => words, scenes: r.scenes, atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []) },
         };
         if (!this.keepTimer) {
             this.keepTimer = setInterval(() => {
