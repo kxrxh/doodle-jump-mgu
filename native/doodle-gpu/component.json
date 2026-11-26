@@ -1,7 +1,7 @@
 {
   "id": "doodle-gpu",
   "kind": "tool",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "title": "Doodle Jump GPU support",
   "description": "Renders Doodle Jump through the Store video interface",
   "mguHmi": [

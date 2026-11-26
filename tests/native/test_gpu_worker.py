@@ -118,6 +118,23 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(newer['sequence'], 2)
         self.assertColor(data, 204, 360, (128, 128, 128))
 
+    def test_probe_disconnect_allows_first_textured_frame_in_later_sessions(self):
+        previous, _ = self.frame(clear((1, 1, 1, 1)))
+        for color in ((255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255)):
+            self.reader.close()
+            self.connection.close()
+            self.connection = socket.socket(socket.AF_UNIX)
+            self.connection.settimeout(10)
+            self.connection.connect(str(self.endpoint))
+            self.reader = self.connection.makefile('rb')
+            upload = packet(TEXTURE, struct.pack('<III', 1, 2, 2) + bytes(color) * 4)
+            commands = clear((0, 0, 0, 1)) + draw((1, 1, 1, 1), 0, 0, 544, 960, texture=1)
+            reply, data = self.frame(commands, before=upload)
+            self.assertEqual(reply['sequence'], 1)
+            self.assertNotEqual(reply['path'], previous['path'])
+            self.assertColor(data, 204, 360, color[:3])
+            previous = reply
+
     def test_sequence_wrap_keeps_zero_reserved_for_an_unwritten_frame(self):
         reply, _ = self.frame(clear((0, 0, 0, 1)))
         with Path(reply['path']).open('r+b') as frame:

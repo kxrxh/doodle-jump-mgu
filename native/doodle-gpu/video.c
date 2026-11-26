@@ -195,7 +195,13 @@ void video_free(struct video **state) {
     if (v->vertices) glDeleteBuffers(1, &v->vertices);
     if (v->framebuffer) glDeleteFramebuffers(1, &v->framebuffer);
     if (v->texture) glDeleteTextures(1, &v->texture);
-    if (v->program) glDeleteProgram(v->program);
+    if (v->program) {
+        GLint current;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &current);
+        // A bound deleted program otherwise survives until the next scene tries to restore it.
+        if ((GLuint)current == v->program) glUseProgram(0);
+        glDeleteProgram(v->program);
+    }
     free(v);
     *state = NULL;
 }

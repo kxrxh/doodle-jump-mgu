@@ -55,7 +55,7 @@ GPU extension to mgu-store revision cc39c1470fd25c4c39605dbe2965139f7d97ce1d:
 https://github.com/robertnisipeanu/mgu-store
 The worker is GPL-3.0-or-later and retains the original renderer's MIT notice
 as LICENSE.mgu-renderd. Complete sources and the build recipe ship as
-doodle-gpu-source-2.0.0.tar.gz and are in native/doodle-gpu.
+doodle-gpu-source-2.0.1.tar.gz and are in native/doodle-gpu.
 
 Source builds download and verify the original APK and game assets. Ready app
 packages include those verified files; the source repository and runtime-only
