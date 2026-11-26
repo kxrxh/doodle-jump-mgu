@@ -20,7 +20,6 @@ def host(arguments):
     command = ['docker', 'run', '--rm', '-i', '--platform', 'linux/amd64',
                '--network=none', '--memory=512m', '--memory-swap=512m',
                '-v', f'{ROOT}:{ROOT}', '-w', str(runtime),
-               '-e', f'LD_LIBRARY_PATH={runtime}:{runtime / "recomp"}',
                '-e', 'MALLOC_MMAP_THRESHOLD_', IMAGE, str(runtime / 'doodle-host'), *arguments]
     os.execvp(command[0], command)
 

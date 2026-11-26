@@ -1,7 +1,6 @@
 'use strict';
 /**
- * fonts.js - loads the pre-baked glyph atlases (kit/runtime/fonts/*.json,
- * made by kit/tools/bake_fonts.py) and picks the best size for a request.
+ * fonts.js - loads the pre-baked glyph atlases and picks the best size for a request.
  */
 const fs = require('fs');
 const path = require('path');

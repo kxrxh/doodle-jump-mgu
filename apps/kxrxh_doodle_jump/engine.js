@@ -197,7 +197,6 @@ class Engine {
             // Bound glibc's retained heap after large image and audio temporaries are freed.
             MALLOC_MMAP_THRESHOLD_: '1048576',
         });
-        ['DOODLE_PYTHON', 'PYTHONPATH', 'PYTHONNOUSERSITE', 'PYTHONDONTWRITEBYTECODE'].forEach(key => delete env[key]);
         const child = this.child = spawn(executable, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'] });
         const reader = new PacketReader((type, body) => this.packet(type,body), true);
         child.stdout.on('data', (chunk) => { try { reader.feed(chunk); } catch (e) { this.fail(e); } });

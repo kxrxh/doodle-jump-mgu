@@ -89,7 +89,6 @@ def pack_bundle(host=HOST):
     spec = importlib.util.spec_from_file_location('pack_data', PROJECT / 'kit/tools/pack_data.py')
     pack_data = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pack_data)
-    pack_data.SPLIT = 1 << 60
     output = PROJECT / 'dist/runtime-linux-x86_64.pack'
     output.parent.mkdir(exist_ok=True)
     raw, size, count = pack_data.pack(str(BUNDLE), str(output))

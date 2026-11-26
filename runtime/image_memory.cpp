@@ -14,7 +14,7 @@ constexpr unsigned read_only = 1, read_write = 3;
 
 void check(int status) {
     if (status)
-        throw std::runtime_error("PNG guest access failed (Unicorn " + std::to_string(status) + ")");
+        throw std::runtime_error("PNG guest access failed (backend status " + std::to_string(status) + ")");
 }
 } // namespace
 
@@ -45,11 +45,11 @@ void PixelSnapshot::detach() {
     allocation.reset();
 }
 
-ImageMemory::ImageMemory(void *engine, const GuestApi &functions) : uc(engine), api(functions) {}
+ImageMemory::ImageMemory(void *engine, const GuestApi &functions) : guest(engine), api(functions) {}
 
 ImageMemory::~ImageMemory() {
     for (const auto &entry : sources)
-        api.mem_unmap(uc, entry.first, entry.second.allocation->mapped);
+        api.mem_unmap(guest, entry.first, entry.second.allocation->mapped);
 }
 
 void *ImageMemory::allocate(uint32_t address, size_t size) {
@@ -63,7 +63,7 @@ void *ImageMemory::allocate(uint32_t address, size_t size) {
         (next != sources.begin() && std::prev(next)->first + std::prev(next)->second.allocation->mapped > address))
         throw std::invalid_argument("Overlapping PNG allocation");
     const auto inserted = sources.emplace(address, Source{allocation, {}, false});
-    const int status = api.mem_map_ptr(uc, address, allocation->mapped, read_write, allocation->data);
+    const int status = api.mem_map_ptr(guest, address, allocation->mapped, read_write, allocation->data);
     if (status) {
         sources.erase(inserted.first);
         check(status);
@@ -75,7 +75,7 @@ void ImageMemory::release(uint32_t address) {
     const auto source = sources.find(address);
     if (source == sources.end())
         throw std::invalid_argument("Unknown PNG allocation");
-    check(api.mem_unmap(uc, address, source->second.allocation->mapped));
+    check(api.mem_unmap(guest, address, source->second.allocation->mapped));
     sources.erase(source);
 }
 
@@ -94,7 +94,7 @@ ImageSlice ImageMemory::snapshot(uint32_t address, size_t size) {
     if (!pixels) {
         pixels = std::make_shared<PixelSnapshot>(source.allocation);
         if (!source.readonly)
-            check(api.mem_protect(uc, found->first, source.allocation->mapped, read_only));
+            check(api.mem_protect(guest, found->first, source.allocation->mapped, read_only));
         source.readonly = true;
         source.snapshot = pixels;
     }
@@ -117,7 +117,7 @@ bool ImageMemory::before_write(uint64_t address, size_t size) {
             continue;
         if (auto pixels = image.snapshot.lock())
             pixels->detach();
-        check(api.mem_protect(uc, source->first, image.allocation->mapped, read_write));
+        check(api.mem_protect(guest, source->first, image.allocation->mapped, read_write));
         image.readonly = false;
         image.snapshot.reset();
         resolved = true;

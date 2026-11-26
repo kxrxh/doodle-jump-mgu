@@ -19,3 +19,5 @@ native.*.sha256
 /apps/kxrxh_doodle_jump/LICENSE
 /apps/kxrxh_doodle_jump/NOTICE
 /native/doodle-gpu/build/
+/runtime/host/target/
+/runtime/ui/target/

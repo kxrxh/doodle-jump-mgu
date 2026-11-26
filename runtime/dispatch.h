@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-// Function pointers use the same loaded Unicorn instance as the Python shell.
+// Function pointers operate on the guest instance supplied by the host.
 struct GuestApi {
     int (*reg_read)(void *, int, void *);
     int (*reg_write)(void *, int, const void *);
@@ -28,7 +28,7 @@ struct NativeResult {
 class ImageMemory;
 
 struct NativeCall {
-    void *uc;
+    void *guest;
     const GuestApi *api;
     const char *name;
     ImageMemory *images;
@@ -37,17 +37,17 @@ struct NativeCall {
 
     void check(int status) const {
         if (status)
-            throw std::runtime_error("Guest access failed (Unicorn " + std::to_string(status) +
+            throw std::runtime_error("Guest access failed (backend status " + std::to_string(status) +
                                      ")");
     }
     uint32_t reg(unsigned index) {
         uint32_t value = 0;
-        check(api->reg_read(uc, api->registers[index], &value));
+        check(api->reg_read(guest, api->registers[index], &value));
         return value;
     }
     void read(uint64_t address, void *output, size_t size) const {
         if (size)
-            check(api->mem_read(uc, address, output, size));
+            check(api->mem_read(guest, address, output, size));
     }
     void write(uint64_t address, const void *data, size_t size) const;
     uint32_t argument(unsigned index) {

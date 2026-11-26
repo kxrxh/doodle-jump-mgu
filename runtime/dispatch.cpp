@@ -10,7 +10,7 @@
 void NativeCall::write(uint64_t address, const void *data, size_t size) const {
     if (size) {
         images->before_write(address, size);
-        check(api->mem_write(uc, address, data, size));
+        check(api->mem_write(guest, address, data, size));
     }
 }
 
@@ -21,7 +21,7 @@ struct Binding {
 };
 
 struct Dispatch {
-    void *uc;
+    void *guest;
     GuestApi api;
     ImageMemory images;
     int hook_type;
@@ -33,11 +33,11 @@ struct Dispatch {
     std::vector<uint64_t> budgets;
     std::string error;
 
-    Dispatch(void *engine, const GuestApi &functions, int type, DispatchFallback python, void *user)
-        : uc(engine), api(functions), images(engine, api), hook_type(type), fallback(python), context(user) {}
+    Dispatch(void *engine, const GuestApi &functions, int type, DispatchFallback host, void *user)
+        : guest(engine), api(functions), images(engine, api), hook_type(type), fallback(host), context(user) {}
     ~Dispatch() {
         for (size_t hook : hooks)
-            api.hook_del(uc, hook);
+            api.hook_del(guest, hook);
     }
     void hook(uint64_t begin, uint64_t end, int type = 0, void *handler = nullptr);
 };
@@ -71,17 +71,17 @@ int single_math(void *, NativeCall *call, NativeResult *result) {
     return 0;
 }
 
-void callback(void *uc, uint64_t address, uint32_t, void *context) noexcept {
+void callback(void *guest, uint64_t address, uint32_t, void *context) noexcept {
     auto &dispatch = *static_cast<Dispatch *>(context);
     try {
         if (!dispatch.error.empty()) {
-            dispatch.api.emu_stop(uc);
+            dispatch.api.emu_stop(guest);
             return;
         }
         const auto name = dispatch.names.find(address);
         if (name == dispatch.names.end())
             throw std::runtime_error("Unknown host call address");
-        NativeCall call{uc, &dispatch.api, name->second.c_str(), &dispatch.images};
+        NativeCall call{guest, &dispatch.api, name->second.c_str(), &dispatch.images};
         NativeResult result;
         auto handler = dispatch.handlers.find(name->second);
         const int status = handler == dispatch.handlers.end()
@@ -91,24 +91,24 @@ void callback(void *uc, uint64_t address, uint32_t, void *context) noexcept {
             throw std::runtime_error("Host callback failed: " + name->second);
         if (result.flags & 1) {
             const uint32_t low = uint32_t(result.value);
-            call.check(dispatch.api.reg_write(uc, dispatch.api.registers[0], &low));
+            call.check(dispatch.api.reg_write(guest, dispatch.api.registers[0], &low));
         }
         if (result.flags & 2) {
             const uint32_t high = uint32_t(result.value >> 32);
-            call.check(dispatch.api.reg_write(uc, dispatch.api.registers[1], &high));
+            call.check(dispatch.api.reg_write(guest, dispatch.api.registers[1], &high));
         }
         const uint32_t link = call.reg(5);
-        call.check(dispatch.api.reg_write(uc, dispatch.api.registers[6], &link));
+        call.check(dispatch.api.reg_write(guest, dispatch.api.registers[6], &link));
     } catch (const std::exception &error) {
         dispatch.error = error.what();
-        dispatch.api.emu_stop(uc);
+        dispatch.api.emu_stop(guest);
     } catch (...) {
         dispatch.error = "Unknown native host callback error";
-        dispatch.api.emu_stop(uc);
+        dispatch.api.emu_stop(guest);
     }
 }
 
-void budget_callback(void *uc, uint64_t, uint32_t size, void *context) noexcept {
+void budget_callback(void *guest, uint64_t, uint32_t size, void *context) noexcept {
     auto &dispatch = *static_cast<Dispatch *>(context);
     // Thumb instructions occupy at least two bytes; charge every active caller too.
     const uint64_t instructions = size > 1 ? size / 2 : 1;
@@ -116,14 +116,14 @@ void budget_callback(void *uc, uint64_t, uint32_t size, void *context) noexcept 
         if (remaining <= instructions) {
             remaining = 0;
             dispatch.error = "Engine call instruction limit exhausted";
-            dispatch.api.emu_stop(uc);
+            dispatch.api.emu_stop(guest);
             return;
         }
         remaining -= instructions;
     }
 }
 
-bool image_write_callback(void *uc, int, uint64_t address, int size, int64_t, void *context) noexcept {
+bool image_write_callback(void *guest, int, uint64_t address, int size, int64_t, void *context) noexcept {
     auto &dispatch = *static_cast<Dispatch *>(context);
     try {
         if (dispatch.error.empty() && size > 0)
@@ -133,30 +133,30 @@ bool image_write_callback(void *uc, int, uint64_t address, int size, int64_t, vo
     } catch (...) {
         dispatch.error = "Unknown PNG copy-on-write error";
     }
-    dispatch.api.emu_stop(uc);
+    dispatch.api.emu_stop(guest);
     return false;
 }
 
 void Dispatch::hook(uint64_t begin, uint64_t end, int type, void *handler) {
     size_t handle = 0;
     const int status =
-        api.hook_add(uc, &handle, type ? type : hook_type,
+        api.hook_add(guest, &handle, type ? type : hook_type,
                      handler ? handler : reinterpret_cast<void *>(callback), this, begin, end);
     if (status)
-        throw std::runtime_error("Cannot register native Unicorn hook: " + std::to_string(status));
+        throw std::runtime_error("Cannot register guest hook (backend status " + std::to_string(status) + ")");
     try {
         hooks.push_back(handle);
     } catch (...) {
-        api.hook_del(uc, handle);
+        api.hook_del(guest, handle);
         throw;
     }
 }
 } // namespace
 
-extern "C" void *dispatch_create(void *uc, const GuestApi *api, int type, int block_type, int write_type, uint64_t begin,
+extern "C" void *dispatch_create(void *guest, const GuestApi *api, int type, int block_type, int write_type, uint64_t begin,
                                  uint64_t end, DispatchFallback fallback, void *context) {
     try {
-        auto dispatch = std::unique_ptr<Dispatch>(new Dispatch(uc, *api, type, fallback, context));
+        auto dispatch = std::unique_ptr<Dispatch>(new Dispatch(guest, *api, type, fallback, context));
         dispatch->hook(begin, end);
         dispatch->hook(1, 0, block_type, reinterpret_cast<void *>(budget_callback));
         dispatch->hook(0x50000000, 0x5fffffff, write_type, reinterpret_cast<void *>(image_write_callback));

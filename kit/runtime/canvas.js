@@ -2,10 +2,9 @@
 /**
  * canvas.js - tiny anti-aliased RGBA canvas that encodes to PNG.
  *
- * Pure JavaScript (node 8 on the head unit has no native canvas). Apps draw
- * their gauges into a Canvas, write the PNG into rhmiData/ and hand the file
- * to the HMI (see mgu.js Screen.setImage). Coordinates are pixels, angles are
- * degrees clockwise from 12 o'clock (gauge convention).
+ * Software fallback for Node 8 on the head unit. The display sends these pixels
+ * to the HMI when the shared renderer is unavailable. Coordinates are pixels;
+ * angles are degrees clockwise from 12 o'clock.
  */
 const zlib = require('zlib');
 const fonts = require('./fonts');
@@ -457,7 +456,7 @@ class Canvas {
     }
 
     /**
-     * Text. font = family name baked by kit/tools/bake_fonts.py ('label', 'num').
+     * Text. font = a pre-baked atlas family ('label', 'num').
      * align: 'left' | 'center' | 'right'; y is the BASELINE.
      * Returns the drawn width in px.
      */

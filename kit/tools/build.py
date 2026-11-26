@@ -12,10 +12,9 @@ The RHMI layout (application.xml + uiDescription.json) is GENERATED from the
 "screens" + "settings" in app.json, using only widget templates that BMW's own
 apps use on this firmware.
 """
-import gzip, json, os, re, shutil, sys, tarfile, tempfile, uuid
+import gzip, json, os, re, shutil, sys, tarfile, uuid
 from xml.sax.saxutils import escape
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pack_data  # noqa: E402
 from localize import unicode_resources, localize_spec, load_locale, languages, credit, credit_name, normalize_language
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -131,25 +130,6 @@ def setting_options(s):
         labels = [lb + ' (default)' if v == s.get('default') else lb for v, lb in zip(values, labels)]
     return values, labels
 
-
-
-def fetch_assets(adir, assets):
-    """Large files an app needs but git doesn't keep (app.json "assets"): downloaded once, checked by SHA-256."""
-    import hashlib, io, urllib.request, zipfile
-    sha = lambda b: hashlib.sha256(b).hexdigest()
-    for a in assets:
-        dst = os.path.join(adir, a['file'])
-        if os.path.exists(dst) and sha(open(dst, 'rb').read()) == a['sha256']:
-            continue
-        print('  fetching %s from %s' % (a['file'], a['url']))
-        data = urllib.request.urlopen(a['url'], timeout=300).read()
-        if a.get('zipSha256') and sha(data) != a['zipSha256']:
-            sys.exit('%s: download does not match its SHA-256' % a['url'])
-        if a.get('zipMember'):
-            data = zipfile.ZipFile(io.BytesIO(data)).read(a['zipMember'])
-        if sha(data) != a['sha256']:
-            sys.exit('%s: file does not match its SHA-256' % a['file'])
-        open(dst, 'wb').write(data)
 
 
 def build_ui(spec, language='en'):
@@ -440,31 +420,15 @@ def build(app_id, language='en', preview_only=False):
     json.dump({'rhmiLoadingEnabled': True, 'entryPointLoadingEnabled': True, 'settings': {app_id: spec.get('config', {})}},
               open(os.path.join(src, 'config', 'base.json'), 'w', encoding='utf-8', newline='\n'), indent=2)
     # app code
-    fetch_assets(adir, spec.get('assets', []))
     for f in os.listdir(adir):
         if f.endswith('.js'):
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', 'app.js' if f == 'main.js' else f))
-        elif f.endswith(('.wasm', '.wad')) or f in ('LICENSE', 'NOTICE'):
-            # files the app reads as they are (doom: the game as WebAssembly, its data, its licences)
+        elif f.endswith('.wasm') or f in ('LICENSE', 'NOTICE'):
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', f))
-        elif os.path.isdir(os.path.join(adir, f)):
-            # data folders go along as one compressed file, read with kit/runtime/pack.js
-            # (e.g. dtc_scanner/dtc_db, the fault text database -> dtc_db.pack)
-            raw, size, _ = pack_data.pack(os.path.join(adir, f), os.path.join(src, 'javascript', f + '.pack'))
-            print('  %s/: %.1f MB packed to %.2f MB' % (f, raw / 1e6, size / 1e6))
-        elif f.endswith('.pack') and not os.path.isdir(os.path.join(adir, f[:-5])):
-            # a committed pack (e.g. dtc_scanner/dtc_db.pack); a local folder of the same name replaces it
+        elif f.endswith('.pack'):
             shutil.move(os.path.join(adir, f), os.path.join(src, 'javascript', f))
             print('  %s' % f)
     # kit runtime
-    if app_id == 'dtc_scanner' and language in ('zh-CN', 'ru'):
-        module = 'build_diagnostic_zh' if language == 'zh-CN' else 'build_diagnostic_ru'
-        catalog = __import__(module).catalog
-        with tempfile.TemporaryDirectory(prefix='mgu-diagnostic-') as temporary:
-            data = os.path.join(temporary, language + '.json')
-            with open(data, 'w', encoding='utf-8', newline='\n') as file:
-                json.dump(catalog(), file, ensure_ascii=False, separators=(',', ':'))
-            pack_data.pack(temporary, os.path.join(src, 'javascript', 'diagnostic_i18n.pack'))
     kr = os.path.join(KIT, 'runtime')
     for f in os.listdir(kr):
         p = os.path.join(kr, f)
@@ -488,11 +452,6 @@ def build(app_id, language='en', preview_only=False):
         for name in ('korean.json', 'OFL-NotoSansKR.txt'):
             shutil.copy(os.path.join(KIT, 'localization', 'fonts', name),
                         os.path.join(src, 'javascript', 'kit', 'fonts', name))
-    if language == 'zh-CN':
-        # Diagnostic glyphs are Chinese-only; keep the English runtime atlas intact.
-        if app_id == 'dtc_scanner':
-            shutil.copy(os.path.join(KIT, 'localization', 'fonts', 'diagnostic-zh-CN.json'),
-                        os.path.join(src, 'javascript', 'kit', 'fonts', 'cjk.json'))
     if credit(language):
         # The translation credit in the installed entry code, as plain comments.
         entry = os.path.join(src, 'javascript', 'app.js')

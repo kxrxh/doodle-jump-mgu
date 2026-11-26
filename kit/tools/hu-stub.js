@@ -3,7 +3,7 @@
  * hu-stub.js - a stubbed head unit for running a built app (dist/<id>) on the PC: the RHMI ui, the
  * real Settings class, ctx and the kit/mgu module the app requires. No SDK, no SOME/IP.
  *
- *   const hu = headUnit('dist/redline', { dataDir, image: (name, cv) => ..., fresh: true, sets });
+ *   const hu = headUnit('dist/kxrxh_doodle_jump', { dataDir, image, fresh: true, sets });
  *   hu.start();          // loads the app (its mgu.run(impl) gets hu.ctx)
  *
  * preview.js (default): frames on demand. ctx.loop only records each screen's draw function

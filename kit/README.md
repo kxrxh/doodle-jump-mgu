@@ -4,6 +4,10 @@ This directory contains the toolkit components used to build, run, and preview
 Doodle Jump. Upstream revision and attribution are recorded in [NOTICE](../NOTICE).
 Toolkit code retains its [MIT license](LICENSE).
 
+This is a game-specific subset. Shared screen chrome is in `runtime/chrome.js`;
+dashboard widgets and data readers from unrelated apps are excluded. Verified
+game downloads and engine-pack extraction are handled by the app's own tools.
+
 The browser preview uses the committed WebAssembly renderer in `emu/web/gfx/`.
 The renderer and `emu/wasm/` adapter are GPL-3.0-or-later, with the original
 renderer's [MIT notice](LICENSE.mgu-renderd). The GPL text is in

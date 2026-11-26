@@ -31,7 +31,7 @@ class ImageMemory {
         std::weak_ptr<PixelSnapshot> snapshot;
         bool readonly = false;
     };
-    void *uc;
+    void *guest;
     const GuestApi &api;
     std::map<uint64_t, Source> sources;
 

@@ -1,7 +1,7 @@
 'use strict';
 /**
  * emu.js - live emulator: a built app running with the real runtime, drawn in the browser by the car's
- * GPU draw engine (kit/renderd/src/gfx.c as WebAssembly, kit/emu/web/gfx/).
+ * WebAssembly draw engine in kit/emu/web/gfx/.
  *
  *   node kit/tools/emu.js kxrxh_doodle_jump [--port 8077] [--bg screenshot.png] [--no-touch]
  *
@@ -9,7 +9,7 @@
  *   app       python3 kit/tools/build.py <id>, then dist/<id> in a child node (hu-stub.js: a stubbed head
  *             unit, settings in preview/emu/<id>/). A save under apps/<id>/ or kit/runtime/ builds and
  *             restarts it; a failed build keeps the old one running.
- *   renderer  the daemon side of kit/renderd/PROTOCOL.md on a Unix socket (MGU_RENDERD_SOCKET for the app):
+ *   renderer  the shared renderer protocol on a Unix socket (MGU_RENDERD_SOCKET for the app):
  *             HELLO -> X_READY (touch routing, controller gate) + READY, X_STATE, TICK when the browser has
  *             drawn the last frame (a page that has not ticked for 200 ms does not paint - a background tab, a
  *             hidden pane, a minimised window: the frames count as drawn when they come, at the FPS cap, until a

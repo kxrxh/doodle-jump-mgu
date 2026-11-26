@@ -1,12 +1,38 @@
 """Check the actual production runtime after rebuilding runtime/prepare.py."""
+import importlib.util
 import json
 from pathlib import Path
 import struct
+import subprocess
+import tempfile
 import unittest
 import zlib
 
 
 PACK = Path(__file__).resolve().parents[2] / 'dist/runtime-linux-x86_64.pack'
+
+
+class DataPackTests(unittest.TestCase):
+    def test_packer_preserves_files_for_the_actual_engine_loader(self):
+        root = PACK.parents[1]
+        spec = importlib.util.spec_from_file_location('pack_data', root / 'kit/tools/pack_data.py')
+        packer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(packer)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory) / 'input'
+            folder.mkdir()
+            expected = {'metadata.json': json.dumps({'long-value': 'x' * 65536}).encode(),
+                        'pixels.bin': bytes(range(256))}
+            for name, data in {**expected, 'excluded': b'unused', '.packignore': b'excluded\n'}.items():
+                (folder / name).write_bytes(data)
+            output = Path(directory) / 'runtime.pack'
+            packer.pack(str(folder), str(output))
+            extracted = Path(directory) / 'extracted'
+            subprocess.run(['node', '-e', 'require(process.argv[1]).unpack(process.argv[2],process.argv[3])',
+                            str(root / 'apps/kxrxh_doodle_jump/engine.js'), str(output), str(extracted)], check=True)
+            for name, data in expected.items():
+                self.assertEqual((extracted / name).read_bytes(), data)
+            self.assertFalse((extracted / 'excluded').exists())
 
 
 @unittest.skipUnless(PACK.is_file(), 'requires a built production runtime')

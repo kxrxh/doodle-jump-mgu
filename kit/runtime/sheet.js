@@ -16,7 +16,6 @@
  *   list(), pill()          the settings' scrolling rows and round buttons, for an app's own sheets
  */
 const { withAlpha } = require('./canvas');
-const G = require('./gauges');
 const { t: translate } = require('./i18n');
 
 const W = 1600, TOP = 46, BOTTOM = 512;
