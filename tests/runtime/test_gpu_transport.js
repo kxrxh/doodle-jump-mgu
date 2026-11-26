@@ -150,6 +150,35 @@ assert.strictEqual(client.info.scenes, false, 'GPU driver failures switch this s
 assert.strictEqual(client.ready, true, 'software fallback keeps the existing display connection');
 assert.strictEqual(record.sceneState.frame, null, 'failed scenes release pending texture packets');
 console.log('GPU driver failure fallback: passed');
+client.video = true;
+client.info.scenes = false;
+record.setVideo(42, '/dev/shm/mgu-video-doodle-test');
+const video = new record.Recorder(1920,720).video(42,600,0,408,720);
+const containing = new record.Recorder(1920,720).append(video).fillRect(0,0,1,1,'#fff');
+assert(containing.videos.has(42), 'appending retains video resources');
+sent.length = 0;
+client.frame(containing);
+assert.deepStrictEqual(sent.map(b=>b.readUInt32LE(0)), [13,7]);
+assert.strictEqual(sent[0].readUInt32LE(8),42);
+assert.strictEqual(sent[0].toString('utf8',12).replace(/\0+$/,''), '/dev/shm/mgu-video-doodle-test');
+assert.strictEqual(sent[1].readUInt32LE(8),19,'the game uses the public VIDEO draw op');
+assert.strictEqual(sent[1].readUInt32LE(32),42);
+sent.length=0;client.frame(containing);
+assert.deepStrictEqual(sent.map(b=>b.readUInt32LE(0)), [7],'a video is registered once per connection');
+client._reset();sent.length=0;client.frame(containing);
+assert.deepStrictEqual(sent.map(b=>b.readUInt32LE(0)), [13,7],'reconnecting re-registers the existing worker file');
+client.place({x:0,y:0,w:1600,h:520,scale:1,ox:0,oy:0});sent.length=0;client.frame(containing);
+assert.deepStrictEqual(sent.map(b=>b.readUInt32LE(0)), [13,7],'resizing re-registers the video');
+record.setVideo(42, '/dev/shm/mgu-video-doodle-reconnected');sent.length=0;client.frame(containing);
+assert.deepStrictEqual(sent.map(b=>b.readUInt32LE(0)), [13,7],'a worker reconnect replaces the video path');
+assert.throws(()=>record.setVideo(42,'/etc/passwd'),/video/);
+rectangles=0;record.play(containing.words(),{fillRect(){rectangles++;}});
+assert.strictEqual(rectangles,1,'software playback skips only the GPU video');
+client._data(message(103,Buffer.from('video 42: cannot open frame')));
+assert.strictEqual(client.video,false,'a renderer video failure selects the CPU path');
+assert.strictEqual(client.ready,true,'video failure keeps the existing display connection');
+console.log('Public video transport and renderer reconnect: passed');
+
 
 {
     const fs = require('fs'), path = require('path'), vm = require('vm'), EventEmitter = require('events');
@@ -163,7 +192,7 @@ console.log('GPU driver failure fallback: passed');
         labels.push(label);
         return text.call(this, label, x, y, size, color, opts);
     };
-    const gpu = new EventEmitter(); gpu.ready = true; gpu.native = true; gpu.info = { scenes:true }; gpu.generation = 1;
+    const gpu = new EventEmitter(); gpu.ready = true; gpu.native = true; gpu.info = { scenes:false }; gpu.video = true; gpu.generation = 1;
     function later(fn, delay) { const id = ++seq; timers.set(id, { fn, at:now + Math.max(1, delay) }); return id; }
     function advance(ms) {
         const end = now + ms;
@@ -176,10 +205,10 @@ console.log('GPU driver failure fallback: passed');
         now = end;
     }
     class StubEngine {
-        constructor() { game = this; this.ready = true; this.busy = false; this.playing = false; this.scenery = { sprites:{} }; }
+        constructor() { game = this; this.ready = true; this.busy = false; this.playing = false; this.scenery = { sprites:{} }; this.worker = {ready:true,generation:1}; }
         start() {} send() {} stop() {}
         frame(command) { this.busy = true; requests.push(command); return true; }
-        gpuFrame() { this.busy = false; this.onGPU(frame()); }
+        gpuFrame() { this.busy = false; this.onVideo({path:'/dev/shm/mgu-video-doodle-test',width:408,height:720,sequence:1}); }
         pixelFrame() { this.busy = false; this.onFrame(Buffer.alloc(408*720*4), 408, 720); }
     }
     const ctx = {
@@ -202,10 +231,10 @@ console.log('GPU driver failure fallback: passed');
         process:{ on(name, fn) { events[name] = fn; }, exit() {} },
     });
     draw(); advance(17);
-    assert.strictEqual(requests[0].gpu, true, 'a fullscreen scene-capable renderer selects native GPU rendering');
+    assert.strictEqual(requests[0].gpu, true, 'a stock renderer with VIDEO selects the independent GPU worker');
     assert.strictEqual(requests[0].gpu_reset, true, 'the first GPU frame uploads a fresh texture set');
     game.gpuFrame(); draw();
-    assert.strictEqual(painting.scenes, true, 'the game scene replaces the center pixel image in the fullscreen recording');
+    assert.strictEqual(painting.videos.has(1), true, 'the worker video replaces the center pixel image in the fullscreen recording');
     const fpsLabel = () => labels.filter(label => label.includes(' FPS')).pop();
     assert.strictEqual(fpsLabel(), undefined, 'FPS display is hidden when disabled');
     showFps = true; draw();
@@ -252,31 +281,37 @@ console.log('GPU driver failure fallback: passed');
     game.gpuFrame(); draw(); advance(17);
     visible = false; focus(); gpu.generation++; draw();
     game.gpuFrame(); draw();
-    assert.strictEqual(painting.scenes, false, 'a late response from the old renderer session stays hidden');
+    assert.strictEqual(painting.videos.has(1), false, 'a late response from the old renderer session stays hidden');
     visible = true; focus(); draw(); advance(17);
-    assert.strictEqual(requests[requests.length - 1].gpu_reset, true, 'a renderer reconnect while paused refreshes all textures on resume');
+    assert.strictEqual(requests[requests.length - 1].gpu_reset, false, 'a renderer reconnect preserves textures in the independent worker');
     game.gpuFrame(); draw(); advance(17);
     full = false;
     ctx.display.place.full = false;
     draw(); game.gpuFrame(); draw();
-    assert(painting.scenes, 'the native renderer can composite scenes inside the standard HMI viewport');
+    assert(painting.videos.has(1), 'the native renderer can composite scenes inside the standard HMI viewport');
     advance(17);
     assert(requests[requests.length - 1].gpu, 'a page placement keeps GPU game capture enabled');
-    gpu.info.scenes = false; draw();
+    game.worker.generation++;draw();game.gpuFrame();advance(17);
+    assert.strictEqual(requests[requests.length-1].gpu_reset,true,'a worker reconnect re-uploads the texture set');
+    game.gpuFrame();draw();
+    game.worker.ready=false;game.worker.lastError='test failure';game.onGPUState();draw();
+    assert(painting.videos.has(1),'worker failure keeps the last completed video until the CPU frame arrives');
+    advance(17);game.gpuFrame();advance(17);
+    assert.strictEqual(requests[requests.length-1].gpu,false,'worker failure requests a CPU frame');
+    game.worker.ready=true;game.onGPUState();game.pixelFrame();advance(17);game.gpuFrame();draw();
+    gpu.video = false; draw();
     game.gpuFrame(); draw();
-    assert.strictEqual(painting.scenes, false, 'loss of the renderer capability immediately removes native scene commands');
+    assert.strictEqual(painting.videos.has(1), false, 'loss of the renderer capability immediately removes native scene commands');
     advance(17);
     assert.strictEqual(requests[requests.length - 1].gpu, false, 'older renderers retain the software frame path');
     game.pixelFrame(); draw();
-    assert.strictEqual(painting.scenes, false);
+    assert.strictEqual(painting.videos.has(1), false);
     assert(painting.images.has(1), 'software fallback publishes the complete game image');
     showFps = true; draw();
     assert.strictEqual(fpsLabel(), 'CPU | Game -- | Render -- FPS');
-    assert(labels.includes('GPU scenes unavailable'));
-    gpu.info.sceneFailed = true; draw();
-    assert.strictEqual(labels[labels.length - 1], 'GPU scene rejected');
-    gpu.info = { scenes:false, shaderFailed:true }; draw();
-    assert.strictEqual(labels[labels.length - 1], 'GPU shader unavailable');
+    assert(labels.includes('Renderer video unavailable'));
+    gpu.video = true; game.worker.ready = false; game.worker.lastError = 'disconnected'; draw();
+    assert.strictEqual(labels[labels.length - 1], 'GPU worker unavailable');
     gpu.native = false; draw();
     assert.strictEqual(labels[labels.length - 1], 'Legacy renderer');
     record.Recorder.prototype.text = text;

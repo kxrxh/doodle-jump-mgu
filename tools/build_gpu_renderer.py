@@ -1,89 +1,71 @@
-"""Build and package the pinned Store renderer with textured game scenes."""
+"""Build and package the independent Doodle Jump GPU worker."""
 import gzip
+import hashlib
 import io
 import json
-import os
 from pathlib import Path
-import shutil
 import subprocess
 import tarfile
 
-from store_build import download, safe_path
+from store_build import safe_path
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def extract(source, destination):
-    with tarfile.open(source) as archive:
-        members = archive.getmembers()
-        for member in members:
-            try:
-                safe_path(member.name)
-            except ValueError as error:
-                raise ValueError('Unsafe renderer source archive') from error
-            if not (member.isfile() or member.isdir()):
-                raise ValueError('Unsafe renderer source archive entry')
-        for member in members:
-            target = destination / member.name
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.extractfile(member) as data, target.open('wb') as output:
-                    shutil.copyfileobj(data, output)
-                target.chmod(member.mode & 0o777)
+def archive(destination, entries):
+    with destination.open('wb') as raw, gzip.GzipFile(fileobj=raw, filename='', mode='wb', mtime=0) as compressed, \
+         tarfile.open(fileobj=compressed, mode='w', format=tarfile.USTAR_FORMAT) as output:
+        for name, data, mode in sorted(entries):
+            safe_path(name)
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = mode
+            output.addfile(info, io.BytesIO(data))
 
 
-def package(source):
+def package():
     component = ROOT / 'native/doodle-gpu'
-    renderer = source / 'native/mgu-render'
-    build = component / 'build'
-    build.mkdir(parents=True, exist_ok=True)
-    for origin, name in ((renderer / 'build/target/mgu-render', 'mgu-render'),
-                         (renderer / 'LICENSE.mgu-renderd', 'LICENSE.mgu-renderd'),
-                         (source / 'LICENSE', 'LICENSE.store')):
-        shutil.copy2(origin, build / name)
-    version = json.loads((component / 'component.json').read_text())['version']
+    specification = json.loads((component / 'component.json').read_text())
+    manifest = {key: value for key, value in specification.items() if key not in ('files', 'units', 'build')}
+    entries = []
+    manifest['files'] = []
+    for entry in specification['files']:
+        safe_path(entry['path'])
+        origin = entry.get('from', entry['path'])
+        safe_path(origin)
+        data = (component / origin).read_bytes()
+        mode = entry.get('mode', '0644')
+        manifest['files'].append(dict(path=entry['path'], mode=mode, sha256=hashlib.sha256(data).hexdigest()))
+        entries.append(('files/' + entry['path'], data, int(mode, 8)))
+    manifest['units'] = []
+    for entry in specification['units']:
+        safe_path(entry['name'])
+        origin = entry.get('from', entry['name'])
+        safe_path(origin)
+        manifest['units'].append(dict(name=entry['name']))
+        entries.append(('units/' + entry['name'], (component / origin).read_bytes(), 0o644))
+    entries.append(('component.json', (json.dumps(manifest, indent=2) + '\n').encode(), 0o644))
     output = ROOT / 'dist'
     output.mkdir(parents=True, exist_ok=True)
-    subprocess.run(['node', str(source / 'deploy/hu'), 'artifact', str(component), '--out', str(output)],
-                   cwd=ROOT, check=True)
-    sources = output / f'doodle-gpu-source-{version}.tar.gz'
+    version = specification['version']
+    artifact = output / f'doodle-gpu@{version}.tgz'
+    archive(artifact, entries)
     prefix = f'doodle-gpu-source-{version}'
-    with sources.open('wb') as raw, gzip.GzipFile(fileobj=raw, filename='', mode='wb', mtime=0) as compressed, \
-         tarfile.open(fileobj=compressed, mode='w') as archive:
-        for path in sorted(renderer.rglob('*')):
-            relative = path.relative_to(renderer)
-            if not path.is_file() or any(part in ('build', '__pycache__', '.DS_Store') for part in relative.parts):
-                continue
-            data = path.read_bytes()
-            info = tarfile.TarInfo(f'{prefix}/mgu-render/{relative.as_posix()}')
-            info.size = len(data)
-            info.mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
-            archive.addfile(info, io.BytesIO(data))
-        data = (source / 'LICENSE').read_bytes()
-        info = tarfile.TarInfo(f'{prefix}/LICENSE.store')
-        info.size = len(data)
-        info.mode = 0o644
-        archive.addfile(info, io.BytesIO(data))
-    return output / f'doodle-gpu@{version}.tgz', sources
+    sources = output / f'{prefix}.tar.gz'
+    entries = []
+    for path in sorted(component.rglob('*')):
+        relative = path.relative_to(component)
+        if not path.is_file() or any(part in ('build', '__pycache__', '.DS_Store') for part in relative.parts):
+            continue
+        entries.append((f'{prefix}/{relative.as_posix()}', path.read_bytes(), 0o644))
+    archive(sources, entries)
+    return artifact, sources
 
 
 def main():
-    config = json.loads((ROOT / 'tools/renderer.json').read_text())
-    cache = ROOT / '.cache/gpu-build'
-    source = download(config['url'], config['sha256'], cache / 'store-source.tar.gz')
-    checkout = cache / 'source'
-    shutil.rmtree(checkout, ignore_errors=True)
-    extract(source, checkout)
-    source = checkout / ('mgu-store-' + config['commit'])
-    patch = ROOT / 'tools/renderer-gpu.patch'
-    # The extracted archive lives inside this repository. Apply from its own root.
-    subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True,
-                   env=dict(os.environ, GIT_CEILING_DIRECTORIES=str(source.parent)))
-    subprocess.run(['make', 'check-target'], cwd=source / 'native/mgu-render', check=True)
-    for path in package(source):
+    subprocess.run(['make', 'target'], cwd=ROOT / 'native/doodle-gpu', check=True)
+    for path in package():
         print(path)
 
 

@@ -4,7 +4,7 @@
     {
       "id": "kxrxh_doodle_jump",
       "kind": "app",
-      "version": "0.9.6",
+      "version": "0.10.0",
       "title": "Doodle Jump",
       "description": "Doodle Jump for MGU7",
       "author": "kxrxh",
@@ -14,23 +14,23 @@
       "requires": {
         "mgu-render": "0.6.26",
         "mgu-python": "1.0.3",
-        "doodle-gpu": "1.0.2"
+        "doodle-gpu": "2.0.0"
       },
       "icon": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/catalog/kxrxh_doodle_jump.png",
       "iconSha256": "5eb833c388867f4d29701358f81687f6cf53a7140eb18376bdf491b679c7b581",
       "artifact": {
-        "name": "kxrxh_doodle_jump@0.9.6.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.9.6/kxrxh_doodle_jump@0.9.6.tgz",
-        "size": 24955685,
-        "sha256": "b977ecbabfa08fa2ca0150975ca4a99af96b0250dd0743e85f6b68a578fba86e"
+        "name": "kxrxh_doodle_jump@0.10.0.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.10.0/kxrxh_doodle_jump@0.10.0.tgz",
+        "size": 24939628,
+        "sha256": "327088aa1972771efd03c6bdd03bdb68c61e7c1d23e93b8a41c7a3a579ebc5b0"
       }
     },
     {
       "id": "doodle-gpu",
       "kind": "tool",
-      "version": "1.0.2",
+      "version": "2.0.0",
       "title": "Doodle Jump GPU support",
-      "description": "Adds textured game scenes to the Store renderer",
+      "description": "Renders Doodle Jump through the Store video interface",
       "mguHmi": [
         "ID7"
       ],
@@ -41,10 +41,10 @@
       "uninstallable": true,
       "author": "kxrxh",
       "artifact": {
-        "name": "doodle-gpu@1.0.2.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.9.4/doodle-gpu@1.0.2.tgz",
-        "size": 93192,
-        "sha256": "941d866f3a243cb83b99bc11fa874693730796a5c699bdf36f2b9b334e003360"
+        "name": "doodle-gpu@2.0.0.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.10.0/doodle-gpu@2.0.0.tgz",
+        "size": 31104,
+        "sha256": "935bb724c650dcbf9043958bbc6c063c1b641870113cfc59af5745fa2cd8d04d"
       }
     }
   ]

@@ -1,6 +1,6 @@
 'use strict';
 const mgu = require('./kit/mgu');
-const { Recorder, setImage, setScene, clearScene } = require('./kit/record');
+const { Recorder, setImage, setVideo } = require('./kit/record');
 const Parked = require('./kit/parked');
 const { Engine } = require('./engine');
 const { cardSheet } = require('./kit/sheet');
@@ -19,8 +19,9 @@ mgu.run({
         let error = null, frames = 0, going = false, dialog = null;
         let recorder = null, lastFrame = Date.now(), lastPaint = Date.now(), lastCcu = 0, touchSource = null, lastMenu = '';
         let frameTimer = null, nextFrameAt = lastFrame + 1000/60, sideWidth = Math.ceil((W-H*544/960)/2*960/H);
-        let gpuEnabled = false, gpuSource = null, gpuGeneration = 0, gpuReset = false, submitted = null, frameMode = null;
+        let gpuEnabled = false, gpuSource = null, gpuGeneration = 0, workerGeneration = 0, gpuReset = false, submitted = null, frameMode = null;
         let fpsSample = null, gameLoop = null;
+        let lastFrameGPU = false, capturedWorkerGeneration = 0;
         let paintedFrame = -1, paintedSteering = 0, paintedFps = false;
         const controls = new Controls(() => engine.playing);
         const world = new World();
@@ -28,10 +29,12 @@ mgu.run({
             if (acceptFrame(false)) { setImage(IMAGE, w, h, rgba, patches); frameMode = 'pixels'; frameReady(); }
             queueFrame();
         };
-        engine.onGPU = (data) => {
-            if (acceptFrame(true)) { setScene(data); frameMode = 'gpu'; frameReady(); }
+        engine.onVideo = (frame) => {
+            if (acceptFrame(true)) { setVideo(IMAGE, frame.path); frameMode = 'gpu'; frameReady(); }
             queueFrame();
         };
+        engine.onGPUError = () => { updateGPU(); queueFrame(); };
+        engine.onGPUState = () => { updateGPU(); queueFrame(); };
         engine.onTexture = (id,w,h,rgba) => setImage(id,w,h,rgba);
         engine.onError = (e) => { error = e; sync(); menu(); };
         engine.onDialog = (request) => {
@@ -74,19 +77,22 @@ mgu.run({
             if (frameTimer !== null) { clearTimeout(frameTimer); frameTimer = null; }
         }
         function updateGPU() {
-            const display = ctx.display, gpu = display && display.gpu;
-            // A covered page can finish an in-flight GPU frame. Its renderer still owns the textures.
-            const retainedScene = !going && !shown() && gpu && gpu === gpuSource && gpu.generation === gpuGeneration;
-            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && (retainedScene || display.active('GAME')));
+            const display = ctx.display, gpu = display && display.gpu, worker = engine.worker;
+            const retained = !going && !shown() && gpu === gpuSource && gpu && gpu.generation === gpuGeneration;
+            const videoReady = !!(gpu && gpu.ready && gpu.native && gpu.video && (retained || display.active('GAME')));
+            const enabled = !!(videoReady && worker && worker.ready);
             const source = enabled ? gpu : null, generation = enabled ? gpu.generation : 0;
-            if (enabled === gpuEnabled && source === gpuSource && generation === gpuGeneration) return;
-            gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation;
-            gpuReset = enabled; frameMode = null; fpsSample = null; clearScene();
+            const workerVersion = enabled ? worker.generation : 0;
+            if (enabled === gpuEnabled && source === gpuSource && generation === gpuGeneration && workerVersion === workerGeneration) return;
+            gpuReset = enabled && (!lastFrameGPU || workerVersion !== capturedWorkerGeneration);
+            gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation; workerGeneration = workerVersion;
+            if (!videoReady) frameMode = null;
+            fpsSample = null;
         }
         function acceptFrame(gpu) {
             updateGPU();
             return submitted && submitted.gpu === gpu && gpuEnabled === gpu &&
-                (!gpu || (submitted.source === gpuSource && submitted.generation === gpuGeneration));
+                (!gpu || (submitted.source === gpuSource && submitted.generation === gpuGeneration && submitted.workerGeneration === workerGeneration));
         }
         function frameReady() {
             frames++;
@@ -110,7 +116,7 @@ mgu.run({
             const now = Date.now(), dt = Math.min(.1, Math.max(1/120, (now-lastFrame)/1000));
             const previous = submitted;
             const command = Object.assign({ dt, side_width:sideWidth, gpu:gpuEnabled, gpu_reset:gpuReset }, controls.take());
-            submitted = { gpu:gpuEnabled, source:gpuSource, generation:gpuGeneration };
+            submitted = { gpu:gpuEnabled, source:gpuSource, generation:gpuGeneration, workerGeneration };
             if (fpsSample && now >= fpsSample.nextTimingAt && settings.get('showFps')) {
                 command.timing = true;
                 submitted.at = now;
@@ -119,6 +125,8 @@ mgu.run({
             if (engine.frame(command)) {
                 if (command.timing) fpsSample.nextTimingAt = now + 1000;
                 gpuReset = false;
+                lastFrameGPU = command.gpu;
+                if (command.gpu) capturedWorkerGeneration = workerGeneration;
                 lastFrame = now;
                 nextFrameAt = Math.max(nextFrameAt + 1000/60, now);
             } else submitted = previous;
@@ -181,8 +189,8 @@ mgu.run({
             if (mode === 'CPU') {
                 if (!renderer || !renderer.ready) reason = 'No active renderer';
                 else if (!renderer.native) reason = 'Legacy renderer';
-                else if (renderer.info && renderer.info.shaderFailed) reason = 'GPU shader unavailable';
-                else reason = renderer.info && renderer.info.sceneFailed ? 'GPU scene rejected' : 'GPU scenes unavailable';
+                else if (!renderer.video) reason = 'Renderer video unavailable';
+                else reason = engine.worker && engine.worker.lastError ? 'GPU worker unavailable' : 'GPU worker connecting';
             }
             if (!reason && ctx.display && ctx.display.lastInterruption) reason = 'Last | ' + ctx.display.lastInterruption;
             cv.fillRect(size / 2, size / 2, 18 * size, ((timed ? 3.5 : 2) + (reason ? 1.5 : 0)) * size, '#342b25');
@@ -216,7 +224,7 @@ mgu.run({
                 recorder.reset();
                 world.draw(recorder,p.w,p.h,engine.scenery,steering,engine.playing,going?paintDt:0);
                 const gw = p.h*544/960, gx = (p.w-gw)/2;
-                if (frameMode === 'gpu') recorder.scene(gx, 0, gw, p.h);
+                if (frameMode === 'gpu') recorder.video(IMAGE, gx, 0, gw, p.h);
                 else if (frameMode === 'pixels') recorder.image(IMAGE, gx, 0, gw, p.h);
                 if (message) recorder.text(message, p.w/2, p.h/2, 24, '#573f2b', { align: 'center', font: 'bold' });
                 drawCursor(recorder,p.w,p.h);
@@ -225,7 +233,7 @@ mgu.run({
             } else {
                 const gw = H*544/960;
                 world.draw(cv,W,H,engine.scenery,steering,engine.playing,going?paintDt:0);
-                if (frameMode === 'gpu' && p) cv.scene((W-gw)/2, 0, gw, H);
+                if (frameMode === 'gpu' && p) cv.video(IMAGE, (W-gw)/2, 0, gw, H);
                 else if (frameMode === 'pixels') cv.image(IMAGE, (W-gw)/2, 0, gw, H);
                 if (message) cv.text(message, W/2, H/2, 24, '#573f2b', { align: 'center', font: 'bold' });
                 drawCursor(cv,W,H);

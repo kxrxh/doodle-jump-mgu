@@ -60,15 +60,23 @@ Requires Docker and clang. Unicorn includes only its ARM guest backend.
 Publish `dist/runtime-linux-x86_64.pack` and update `tools/runtime.json` with its
 URL, size, and SHA-256 before building the app.
 
-To rebuild GPU support, use Docker, Git, and Node.js 14 or later.
+To rebuild the GPU worker, use Docker and Python 3.
 
 ```sh
 python3 tools/build_gpu_renderer.py
 ```
 
-The script applies `tools/renderer-gpu.patch` to the Store source pinned in
-`tools/renderer.json`. It produces the add-on package and corresponding renderer
-sources in `dist/`. Store installs the add-on with the game.
+The worker renders offscreen and publishes frames through Store's documented
+VIDEO interface. Its service and socket belong to `doodle-gpu`. The build creates
+the worker package and corresponding sources in `dist/`; Store installs it with
+the game. Upgrading an older GPU add-on removes its renderer override. Restart
+when Store asks to complete that migration.
+
+Run the worker's native integration tests with Mesa before publishing.
+
+```sh
+make -C native/doodle-gpu test
+```
 
 For browser renderer rebuilds, see [the toolkit notes](../kit/README.md).
 

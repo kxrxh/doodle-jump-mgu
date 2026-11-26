@@ -1,0 +1,13 @@
+[Unit]
+Description=Doodle Jump offscreen GPU worker
+Requires=doodle-gpu.socket
+After=winston.service doodle-gpu.socket
+
+[Service]
+Environment=XDG_RUNTIME_DIR=/run/wayland
+User=root
+Group=mgu_wayland
+ExecStart=/var/opt/doodle-gpu/current/doodle-gpu
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=5

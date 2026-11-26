@@ -1,6 +1,5 @@
 import hashlib
 import importlib
-import io
 import json
 import os
 from pathlib import Path
@@ -17,12 +16,6 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECK = ROOT / 'native/doodle-gpu/gpu_check.js'
-UPSTREAM = ROOT / '.cache/gpu-renderer-source'
-
-
-def packet(kind, *values):
-    body = struct.pack('<' + 'I' * len(values), *values)
-    return struct.pack('<II', kind, len(body)) + body
 
 
 class GpuCheckTests(unittest.TestCase):
@@ -40,7 +33,7 @@ class GpuCheckTests(unittest.TestCase):
                     connection, _ = server.accept()
                     with connection:
                         connection.settimeout(2)
-                        while len(received) < 8 or len(received) < 8 + struct.unpack_from('<I', received, 4)[0]:
+                        while len(received) < 44:
                             data = connection.recv(4096)
                             if not data:
                                 return
@@ -60,31 +53,24 @@ class GpuCheckTests(unittest.TestCase):
             server.close()
             return result, bytes(received)
 
-    def test_fragmented_capability_and_ready_answer_pass_without_showing_a_surface(self):
-        data = packet(0x4d520101, 1, 6, 256, *([0]*10), 0x31465047) + packet(101, 4, 1920, 720, 1)
+    def test_fragmented_frame_answer_passes_without_showing_a_surface(self):
+        data = json.dumps(dict(path='/dev/shm/mgu-video-doodle-test', width=408, height=720, sequence=1)).encode()+b'\n'
         result, sent = self.probe([data[:3], data[3:19], data[19:]])
         self.assertEqual(result.returncode, 0, result.stderr)
-        kind, size = struct.unpack_from('<II', sent)
-        self.assertEqual(kind, 1)
-        self.assertEqual(len(sent), 8 + size)
-        self.assertIn(b'\0proto=mgu-render/1', sent[8:])
+        self.assertEqual(struct.unpack_from('<II', sent), (0x4d520008, 28))
+        self.assertEqual(struct.unpack_from('<II', sent, 36), (0x444a0001, 0))
 
-    def test_missing_capability_truncated_answer_and_silence_fail(self):
-        cases = [([packet(0x4d520101, 1, 6, 256, *([0]*10)) + packet(101, 4, 1920, 720, 1)], True, 'GPU scenes'),
-                 ([packet(0x4d520101, 1, 6, 8) + packet(101, 4, 1920, 720, 1)], True, 'GPU scenes'),
-                 ([packet(0x4d520101, 1, 6, 256)[:-1]], True, 'closed'),
-                 ([struct.pack('<II', 101, 0x1000000)], False, 'large'),
+    def test_invalid_frame_truncated_answer_and_silence_fail(self):
+        cases = [([b'{}\n'], True, 'invalid'),
+                 ([b'not json\n'], True, 'GPU worker'),
+                 ([b'{'], True, 'closed'),
+                 ([b'x'*4097], False, 'large'),
                  ([], False, 'timeout')]
         for chunks, close, reason in cases:
             with self.subTest(chunks=chunks, close=close):
                 result, _ = self.probe(chunks, close)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(reason, result.stderr)
-
-    def test_removed_hook_only_requests_a_restart(self):
-        result = subprocess.run(['node', str(CHECK), '--removed'], capture_output=True, text=True, timeout=2)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(json.loads(result.stdout)['reboot'])
 
 
 class GpuPackageTests(unittest.TestCase):
@@ -94,61 +80,43 @@ class GpuPackageTests(unittest.TestCase):
         except ModuleNotFoundError:
             self.fail('GPU renderer packaging is missing')
 
-    def test_package_replaces_only_the_renderer_executable_and_keeps_sources_and_licenses(self):
+    def test_package_owns_only_worker_units_and_keeps_sources_and_licenses(self):
         build = self.module()
-        node = subprocess.check_output(['node', '--version'], text=True).strip()
-        if int(node.lstrip('v').split('.')[0]) < 14:
-            self.skipTest('the Store developer packager requires Node.js 14 or later')
-        if not (UPSTREAM / 'deploy/hu').is_file():
-            self.skipTest('pinned Store checkout is needed for the real artifact packager')
         with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            source = directory / 'source'
-            root = directory / 'repo'
-            renderer = source / 'native/mgu-render'
-            (renderer / 'build/target').mkdir(parents=True)
-            binary = b'\x7fELF' + b'fixture renderer'
-            (renderer / 'build/target/mgu-render').write_bytes(binary)
-            (renderer / 'scene.c').write_text('fixture corresponding source\n')
-            (renderer / 'LICENSE.mgu-renderd').write_text('renderer license\n')
-            (source / 'LICENSE').write_text('Store license\n')
-            for name in ('deploy/hu', 'tools/oap_pack.js'):
-                (source / name).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(UPSTREAM / name, source / name)
-            shutil.copytree(ROOT / 'native/doodle-gpu', root / 'native/doodle-gpu',
-                            ignore=shutil.ignore_patterns('build'))
+            root = Path(directory)
+            component = root/'native/doodle-gpu'
+            shutil.copytree(ROOT/'native/doodle-gpu', component, ignore=shutil.ignore_patterns('build'))
+            (component/'build/target').mkdir(parents=True)
+            binary = b'\x7fELF' + b'fixture worker'
+            (component/'build/target/doodle-gpu').write_bytes(binary)
             with patch.object(build, 'ROOT', root):
-                artifact, sources = build.package(source)
+                artifact, sources = build.package()
+                first = artifact.read_bytes()
+                build.package()
+                self.assertEqual(first, artifact.read_bytes(), 'packages are reproducible')
             with tarfile.open(artifact) as archive:
                 manifest = json.load(archive.extractfile('component.json'))
                 self.assertEqual(manifest['id'], 'doodle-gpu')
-                self.assertEqual(manifest['units'], [])
-                self.assertEqual(manifest['restart'], ['mgu-render.service'])
-                self.assertEqual(manifest['dropins'], [{'unit': 'mgu-render.service', 'name': '90-doodle-gpu.conf'}])
-                self.assertEqual(archive.extractfile('files/mgu-render').read(), binary)
-                self.assertEqual(archive.extractfile('files/LICENSE.store').read(), b'Store license\n')
-                self.assertEqual(archive.extractfile('files/LICENSE.mgu-renderd').read(), b'renderer license\n')
-                entry = next(x for x in manifest['files'] if x['path'] == 'mgu-render')
-                self.assertEqual(entry['sha256'], hashlib.sha256(binary).hexdigest())
-                self.assertEqual(entry['mode'], '0755')
-                self.assertEqual(archive.extractfile('dropins/mgu-render.service.d/90-doodle-gpu.conf').read(),
-                                 b'[Service]\nExecStart=\nExecStart=/var/opt/doodle-gpu/current/mgu-render -c /var/opt/mgu-render/current/mgu-render.conf\n')
+                self.assertEqual(manifest.get('dropins', []), [])
+                self.assertEqual(manifest['restart'], ['doodle-gpu.service'])
+                self.assertEqual({entry['name'] for entry in manifest['units']}, {'doodle-gpu.service', 'doodle-gpu.socket'})
+                for entry in manifest['files']:
+                    self.assertEqual(hashlib.sha256(archive.extractfile('files/'+entry['path']).read()).hexdigest(), entry['sha256'])
+                self.assertEqual(archive.extractfile('files/doodle-gpu').read(), binary)
+                service = archive.extractfile('units/doodle-gpu.service').read().decode()
+                self.assertIn('/var/opt/doodle-gpu/current/doodle-gpu', service)
+                self.assertNotIn('/var/opt/mgu-render/', service)
+                self.assertNotIn('mgu-render.service', service)
+                socket_unit = archive.extractfile('units/doodle-gpu.socket').read().decode()
+                self.assertIn('/run/doodle-gpu/render.sock', socket_unit)
+                self.assertIn('SocketGroup=tm_oap_app', socket_unit)
+                self.assertIn('files/LICENSE', archive.getnames())
+                self.assertIn('files/LICENSE.mgu-renderd', archive.getnames())
             with tarfile.open(sources) as archive:
-                self.assertTrue(any(name.endswith('/scene.c') for name in archive.getnames()))
-                self.assertFalse(any('/build/' in name for name in archive.getnames()))
-
-    def test_source_archive_cannot_write_outside_its_directory(self):
-        build = self.module()
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            source = directory / 'source.tar.gz'
-            with tarfile.open(source, 'w:gz') as archive:
-                info = tarfile.TarInfo('../escaped')
-                info.size = 1
-                archive.addfile(info, io.BytesIO(b'x'))
-            with self.assertRaisesRegex(ValueError, 'source archive'):
-                build.extract(source, directory / 'out')
-            self.assertFalse((directory / 'escaped').exists())
+                names=archive.getnames()
+                for source in ('scene.c', 'scene.h', 'worker.c', 'video.c', 'video.h', 'Makefile', 'LICENSE'):
+                    self.assertTrue(any(name.endswith('/'+source) for name in names), source)
+                self.assertFalse(any('/build/' in name for name in names))
 
 
 if __name__ == '__main__':

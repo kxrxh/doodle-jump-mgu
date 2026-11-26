@@ -1,52 +1,44 @@
 'use strict';
 const net = require('net');
-
-if (process.argv[2] === '--removed') {
-    console.log(JSON.stringify({ reboot: 'Restart to use the Store renderer without Doodle Jump GPU support' }));
-} else {
-    const endpoint = process.env.DOODLE_GPU_CHECK_SOCKET || '/run/mgu-render/render.sock';
-    const requested = Number(process.env.DOODLE_GPU_CHECK_TIMEOUT_MS || 90000);
-    const timeout = requested > 0 && requested <= 90000 ? requested : 90000;
-    const connection = net.connect(endpoint);
-    let buffer = Buffer.alloc(0), supported = false, finished = false;
-    function done(error) {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timer);
-        connection.destroy();
-        if (error) { console.error(error); process.exitCode = 1; }
-        else console.log('Doodle Jump GPU renderer ready');
-    }
-    const timer = setTimeout(() => done('GPU renderer timeout'), timeout);
-    connection.on('connect', () => {
-        const hello = Buffer.from('doodle-gpu-check\0proto=mgu-render/1');
-        const packet = Buffer.alloc(8 + ((hello.length + 3) & ~3));
-        packet.writeUInt32LE(1, 0); packet.writeUInt32LE(packet.length - 8, 4); hello.copy(packet, 8);
-        connection.write(packet);
-    });
-    connection.on('data', (data) => {
-        if (finished) return;
-        if (buffer.length + data.length > 65536) return done('GPU renderer answer is too large');
-        buffer = Buffer.concat([buffer, data]);
-        while (buffer.length >= 8) {
-            const kind = buffer.readUInt32LE(0), size = buffer.readUInt32LE(4);
-            if (size > 4096) return done('GPU renderer answer is too large');
-            if (buffer.length < 8 + size) return;
-            const body = buffer.slice(8, 8 + size);
-            buffer = buffer.slice(8 + size);
-            if (kind === 0x4d520101) {
-                if (size < 56 || body.readUInt32LE(0) !== 1 || body.toString('latin1', 52, 56) !== 'GPF1')
-                    return done('Renderer does not support GPU scenes');
-                supported = true;
-            } else if (kind === 101) {
-                if (!supported) return done('Renderer does not support GPU scenes');
-                if (size < 12 || !body.readUInt32LE(4) || !body.readUInt32LE(8) ||
-                    body.readUInt32LE(4) > 16384 || body.readUInt32LE(8) > 16384)
-                    return done('GPU renderer returned an invalid screen size');
-                return done();
-            } else if (kind === 103) return done('GPU renderer: ' + body.toString('utf8'));
-        }
-    });
-    connection.on('error', (error) => done('GPU renderer: ' + (error.code || error.message)));
-    connection.on('close', () => done('GPU renderer closed the connection before READY'));
+const endpoint = process.env.DOODLE_GPU_CHECK_SOCKET || '/run/doodle-gpu/render.sock';
+const requested = Number(process.env.DOODLE_GPU_CHECK_TIMEOUT_MS || 90000);
+const timeout = requested > 0 && requested <= 90000 ? requested : 90000;
+const connection = net.connect(endpoint);
+let buffer = '', finished = false;
+function done(error) {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    connection.destroy();
+    if (error) { console.error(error); process.exitCode = 1; }
+    else console.log('Doodle Jump GPU worker ready');
 }
+const timer = setTimeout(() => done('GPU worker timeout'), timeout);
+connection.on('connect', () => {
+    // A private offscreen clear checks rendering and frame publication without showing a surface.
+    const request = Buffer.alloc(44);
+    request.writeUInt32LE(0x4d520008, 0);
+    request.writeUInt32LE(28, 4);
+    request.writeUInt32LE(544, 8);
+    request.writeUInt32LE(960, 12);
+    request.writeUInt32LE(1, 16);
+    for (let offset = 20; offset < 36; offset += 4) request.writeFloatLE(1, offset);
+    request.writeUInt32LE(0x444a0001, 36);
+    connection.write(request);
+});
+connection.on('data', (data) => {
+    if (finished) return;
+    buffer += data.toString('utf8');
+    if (buffer.length > 4096) return done('GPU worker answer is too large');
+    const end = buffer.indexOf('\n');
+    if (end < 0) return;
+    try {
+        const frame = JSON.parse(buffer.slice(0, end));
+        if (!/^\/dev\/shm\/mgu-video-doodle-[A-Za-z0-9_.-]+$/.test(frame.path) ||
+            frame.width !== 408 || frame.height !== 720 || !Number.isSafeInteger(frame.sequence) || frame.sequence < 1)
+            throw new Error('GPU worker returned an invalid frame');
+        done();
+    } catch (error) { done('GPU worker: ' + error.message); }
+});
+connection.on('error', (error) => done('GPU worker: ' + (error.code || error.message)));
+connection.on('close', () => done('GPU worker closed the connection before publishing a frame'));

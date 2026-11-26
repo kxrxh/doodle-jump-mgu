@@ -1,24 +1,56 @@
 {
   "id": "doodle-gpu",
   "kind": "tool",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "title": "Doodle Jump GPU support",
-  "description": "Adds textured game scenes to the Store renderer",
-  "mguHmi": ["ID7"],
+  "description": "Renders Doodle Jump through the Store video interface",
+  "mguHmi": [
+    "ID7"
+  ],
   "optional": true,
   "uninstallable": true,
-  "requires": { "mgu-render": "0.6.26" },
+  "requires": {
+    "mgu-render": "0.6.26"
+  },
   "files": [
-    { "path": "mgu-render", "from": "build/mgu-render", "mode": "0755" },
-    { "path": "LICENSE.mgu-renderd", "from": "build/LICENSE.mgu-renderd", "mode": "0644" },
-    { "path": "LICENSE.store", "from": "build/LICENSE.store", "mode": "0644" },
-    { "path": "gpu_check.js", "mode": "0644" }
+    {
+      "path": "doodle-gpu",
+      "from": "build/target/doodle-gpu",
+      "mode": "0755"
+    },
+    {
+      "path": "LICENSE",
+      "mode": "0644"
+    },
+    {
+      "path": "LICENSE.mgu-renderd",
+      "mode": "0644"
+    },
+    {
+      "path": "gpu_check.js",
+      "mode": "0644"
+    }
   ],
-  "dropins": [
-    { "unit": "mgu-render.service", "name": "90-doodle-gpu.conf" }
+  "restart": [
+    "doodle-gpu.service"
   ],
-  "restart": ["mgu-render.service"],
-  "keepRunning": true,
-  "check": ["gpu_check.js"],
-  "deactivate": ["node", "gpu_check.js", "--removed"]
+  "check": [
+    "gpu_check.js"
+  ],
+  "units": [
+    {
+      "name": "doodle-gpu.socket",
+      "from": "systemd/doodle-gpu.socket"
+    },
+    {
+      "name": "doodle-gpu.service",
+      "from": "systemd/doodle-gpu.service"
+    }
+  ],
+  "enable": [
+    {
+      "unit": "doodle-gpu.socket",
+      "target": "sockets.target"
+    }
+  ]
 }

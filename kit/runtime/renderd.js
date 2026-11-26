@@ -54,12 +54,13 @@ class RenderClient extends EventEmitter {
         this.sock = null;
         this.connected = false;
         this.ready = false;
+        this.video = false;
         this.generation = 0;
         this.screen = { w: 1920, h: 720 };
         this.placement = null;
         this.visible = false;
         this.inbuf = Buffer.alloc(0);
-        this.sent = { atlas: new Set(), ramp: new Set(), layer: new Set(), image: new Map() };
+        this.sent = { atlas: new Set(), ramp: new Set(), layer: new Set(), image: new Map(), video: new Map() };
         this.stats = null;
         this.waiting = false;        // a frame was sent, no tick back yet
         this.retry = null;
@@ -96,7 +97,7 @@ class RenderClient extends EventEmitter {
             this._reset();
             this.inbuf = Buffer.alloc(0);   // (a message cut off with the last connection)
             s.setNoDelay && s.setNoDelay(true);
-            this.native = false; this.info = null; this.onScreen = null;
+            this.native = false; this.video = false; this.info = null; this.onScreen = null;
             this.claimed = null;
             this._write(msg(M.HELLO, this._hello()));
             // upstream renderers take these before READY; they are sent again once READY came
@@ -111,7 +112,7 @@ class RenderClient extends EventEmitter {
         });
         s.on('close', () => {
             const was = this.ready;
-            this.connected = this.ready = this.native = false; this.sock = null; this.waiting = false; this.onScreen = null;
+            this.connected = this.ready = this.native = this.video = false; this.sock = null; this.waiting = false; this.onScreen = null;
             if (was) { this.log.warn('renderd: connection closed'); this.emit('close'); }
             if (!this.closed) this.retry = setTimeout(() => { this.retry = null; this.connect(); }, 3000);
         });
@@ -164,7 +165,7 @@ class RenderClient extends EventEmitter {
         if (this.sock) this.sock.destroy();
         if (this.fd !== null) { fs.closeSync(this.fd); this.fd = null; }
     }
-    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.sent.scene = null; this.waiting = false; }
+    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.sent.video.clear(); this.sent.scene = null; this.waiting = false; }
     _write(b) {
         if (this.fd !== null) { fs.writeSync(this.fd, b); return true; }
         return this.sock && this.connected ? this.sock.write(b) : false;
@@ -201,6 +202,9 @@ class RenderClient extends EventEmitter {
                 this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), pixmaps:!!(caps & 8), scenes:marker === 'GPF1', shaderFailed:marker === 'GPF0' };
             } else if (type === E.READY) {
                 this.ready = true; this.errLogged = false; this.stats = null;
+                this.version = p.readUInt32LE(0);
+                this.video = this.version >= 4;
+                this._reset();
                 this.generation++;
                 if (this.native && this.info && this.info.scenes) rec.clearScene();
                 this.screen = { w: p.readUInt32LE(4), h: p.readUInt32LE(8) };
@@ -244,6 +248,7 @@ class RenderClient extends EventEmitter {
                 this.emit('stats', this.stats);
             } else if (type === E.ERROR) {
                 const error = p.toString();
+                if (/^video [0-9]+:/.test(error)) this.video = false;
                 if (error.indexOf('scene GPU:') === 0 && this.info) {
                     this.info.scenes = false;
                     this.info.sceneFailed = true;
@@ -312,6 +317,17 @@ class RenderClient extends EventEmitter {
         if (r.layersUsed || r.sublayers) (r.layersUsed || r.sublayers).forEach((id) => this._ensureLayer(id));
         if (r.images) r.images.forEach((id) => this._ensureImage(id));
         if (r.scenes) this._ensureScene();
+        if (r.videos) r.videos.forEach(id => this._ensureVideo(id));
+    }
+    _ensureVideo(id) {
+        if (!this.native || !this.video) throw new Error('Renderer does not support video');
+        const path = rec.videoById.get(id);
+        if (!path || this.sent.video.get(id) === path) return;
+        const name = Buffer.from(path + '\0');
+        const body = Buffer.alloc(4 + name.length);
+        body.writeUInt32LE(id, 0); name.copy(body, 4);
+        this._write(msg(13, body));
+        this.sent.video.set(id, path);
     }
     _ensureScene() {
         if (!this.native || !this.info || !this.info.scenes) throw new Error('Renderer does not support GPU scenes');
@@ -380,7 +396,7 @@ class RenderClient extends EventEmitter {
     }
 
     _words(source) {
-        const out=this.native?new Uint32Array(source):source,sizes=[0,2,6,0,7,8,0,9,12,7,0,0,4,5,1,10,2,4,7,0,6];
+        const out=this.native?new Uint32Array(source):source,sizes=[0,2,6,0,7,8,0,9,12,7,0,0,4,5,1,10,2,4,7,7,6];
         for(let i=0;i<out.length;){
             const op=out[i];let n=sizes[op];
             if(op===3)n=6+2*out[i+5];
@@ -388,6 +404,7 @@ class RenderClient extends EventEmitter {
             else if(op===10)n=2+9*out[i+1];
             else if(op===11)n=4+8*out[i+3];
             if(!n || i+n>out.length)throw new Error('Invalid recorded image frame');
+            if(op===19&&(!this.native||!this.video))throw new Error('Renderer does not support video');
             if(op===20&&(!this.native||!this.info||!this.info.scenes))throw new Error('Renderer does not support GPU scenes');
             if(op===18&&this.native){const id=out[i+1];out.copyWithin(i+1,i+3,i+7);out[i+5]=0;out[i+6]=id;}
             i+=n;

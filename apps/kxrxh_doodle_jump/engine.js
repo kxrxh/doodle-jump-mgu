@@ -4,6 +4,7 @@ const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { GpuWorker } = require('./gpu');
 
 const MAX_PACKET = 2048 * 2048 * 4 + 12;
 const MAX_GPU_PACKET = 64 << 20;
@@ -165,10 +166,13 @@ function unpack(file, directory) {
 class Engine {
     constructor(dataDir, log) {
         this.dataDir = dataDir; this.log = log; this.ready = false; this.busy = false; this.dead = false; this.playing = false;
-        this.onFrame = null; this.onGPU = null; this.onError = null; this.onDialog = null; this.onTexture = null;
+        this.onFrame = null; this.onGPU = null; this.onVideo = null; this.onGPUError = null; this.onGPUState = null; this.onError = null; this.onDialog = null; this.onTexture = null;
         this.scenery = { sprites: {} };
     }
     start() {
+        this.worker = new GpuWorker(this.log);
+        this.worker.onState = () => { if (this.onGPUState) this.onGPUState(); };
+        this.worker.connect();
         let directory = process.env.DOODLE_ENGINE;
         if (!directory) {
             directory = path.join(this.dataDir, 'engine');
@@ -199,8 +203,18 @@ class Engine {
             if (type === 'GPF1') {
                 validateGPU(body);
                 this.frameImage = null;
-                this.busy = false;
-                if (this.onGPU) this.onGPU(body);
+                if (this.frameUsesWorker) {
+                    const complete = (error, frame) => {
+                        this.busy = false;
+                        if (this.dead) return;
+                        if (error) { if (this.onGPUError) this.onGPUError(error); }
+                        else if (this.onVideo) this.onVideo(frame);
+                    };
+                    if (!this.worker || !this.worker.render(body, complete)) complete(new Error('GPU worker unavailable'));
+                } else {
+                    this.busy = false;
+                    if (this.onGPU) this.onGPU(body);
+                }
             } else if (type === 'TEX1') {
                 if (body.length<12) throw new Error('Short scenery texture');
                 const id=body.readUInt32LE(0),w=body.readUInt32LE(4),h=body.readUInt32LE(8);
@@ -264,15 +278,17 @@ class Engine {
         if (this.dead) return;
         this.dead = true; this.busy = false; this.ready = false;
         this.log.error('Doodle Jump: ' + error.message);
+        if (this.worker) this.worker.close();
         if (this.child) this.child.kill();
         if (this.onError) this.onError(error);
     }
     send(command) { if (!this.dead && this.child && this.child.stdin.writable) this.child.stdin.write(JSON.stringify(command) + '\n'); }
     frame(command) {
         if (!this.ready || this.busy || this.dead) return false;
+        this.frameUsesWorker = !!(command.gpu && this.worker);
         this.frameTiming = null; this.busy = true; this.send(Object.assign({ frame: true }, command)); return true;
     }
-    stop() { this.dead = true; if (this.child) this.child.kill(); }
+    stop() { this.dead = true; if (this.worker) this.worker.close(); if (this.child) this.child.kill(); }
 }
 
 module.exports = { Engine, PacketReader, unpack };

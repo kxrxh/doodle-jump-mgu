@@ -48,13 +48,14 @@ MGU toolkit: https://github.com/cauliflowermossgrape/idrive7-apps
 Revision: cca7f9ad17f96b92e60a89ea98686afe1b662041
 See kit/LICENSE and kit/LICENSE.mgu-renderd.
 
-The separately installed doodle-gpu renderer add-on is based on mgu-store:
+The separately installed doodle-gpu worker renders game scenes offscreen and
+publishes I420 frames through mgu-render's documented VIDEO interface. It runs
+its own service and socket. Its scene executor originated in the Doodle Jump
+GPU extension to mgu-store revision cc39c1470fd25c4c39605dbe2965139f7d97ce1d:
 https://github.com/robertnisipeanu/mgu-store
-Revision: cc39c1470fd25c4c39605dbe2965139f7d97ce1d
-It retains the Store's GPL-3.0 license and the original renderer's MIT notice
-as LICENSE.store and LICENSE.mgu-renderd. Its complete modified renderer sources
-ship alongside the binary as doodle-gpu-source-1.0.2.tar.gz; the pinned build recipe
-and patch are in tools/build_gpu_renderer.py and tools/renderer-gpu.patch.
+The worker is GPL-3.0-or-later and retains the original renderer's MIT notice
+as LICENSE.mgu-renderd. Complete sources and the build recipe ship as
+doodle-gpu-source-2.0.0.tar.gz and are in native/doodle-gpu.
 
 Source builds download and verify the original APK and game assets. Ready app
 packages include those verified files; the source repository and runtime-only

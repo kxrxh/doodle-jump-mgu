@@ -17,7 +17,7 @@ const { t } = require('./i18n');
 
 const OP = {
     CLEAR: 1, RECT: 2, GRAD: 3, RRECT: 4, RSTROKE: 5, CARD: 6, RAMPRECT: 7, ARC: 8, LINE: 9,
-    TRIS: 10, GLYPHS: 11, LAYER: 12, CLIP: 13, NOCLIP: 14, QUAD: 15, ALPHA: 16, XF: 17, IMAGE: 18, SCENE: 20,
+    TRIS: 10, GLYPHS: 11, LAYER: 12, CLIP: 13, NOCLIP: 14, QUAD: 15, ALPHA: 16, XF: 17, IMAGE: 18, VIDEO: 19, SCENE: 20,
 };
 
 /* ---------- colours: 0xRRGGBBAA ---------- */
@@ -74,6 +74,13 @@ function setImage(id, w, h, data, patches) {
     return im;
 }
 
+const videoById = new Map();
+function setVideo(id, path) {
+    if (!Number.isInteger(id) || id < 1 || id > 0xffffffff || typeof path !== 'string' ||
+        !/^\/dev\/shm\/mgu-video-[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}$/.test(path)) throw new Error('Invalid video frame path');
+    videoById.set(id, path);
+}
+
 const sceneState = { ver:0, frame:null, pending:new Map() };
 function clearScene() { sceneState.frame = null; sceneState.pending.clear(); }
 function setScene(data) {
@@ -115,6 +122,7 @@ class Recorder {
         this.ramps = new Set();
         this.images = new Set();     // pixel images it draws (setImage)
         this.scenes = false;
+        this.videos = new Set();
         this.targets = [];           // what a tap or the controller can press on the page: { x, y, w, h, run, key } (target)
         this._extra = 0;
         this.extraUsed = false;      // the drawing read extra (it reaches below the page: display.js places it so)
@@ -123,7 +131,7 @@ class Recorder {
     /** logical px the screen has below the app's page (display.js), 0 if none */
     get extra() { if (this._extra) this.extraUsed = true; return this._extra; }
     set extra(v) { this._extra = v || 0; }
-    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); this.scenes = false; return this; }
+    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); this.videos.clear(); this.scenes = false; return this; }
     _grow(k) {
         if (this.n + k <= this.u.length) return;
         let len = this.u.length * 2;
@@ -150,6 +158,14 @@ class Recorder {
         this.u[i] = OP.IMAGE; this.u[i + 1] = id; this.u[i + 2] = im.ver; f[i + 3] = x; f[i + 4] = y; f[i + 5] = w; f[i + 6] = h;
         this.images.add(id);
         this.n += 7; return this;
+    }
+    video(id, x, y, w, h) {
+        if (!videoById.has(id) || !(w > 0 && h > 0)) return this;
+        this._grow(7); const i = this.n;
+        this.u[i] = OP.VIDEO; this.f[i + 1] = x; this.f[i + 2] = y;
+        this.f[i + 3] = w; this.f[i + 4] = h; this.f[i + 5] = 0; this.u[i + 6] = id;
+        this.n += 7; this.videos.add(id);
+        return this;
     }
     scene(x, y, w, h) {
         if (!sceneState.frame || !(w > 0 && h > 0)) return this;
@@ -255,6 +271,7 @@ class Recorder {
         r.atlases.forEach((a) => this.atlases.add(a)); r.ramps.forEach((a) => this.ramps.add(a));
         if (r.images) r.images.forEach((id) => this.images.add(id));
         if (r.scenes) this.scenes = true;
+        if (r.videos) r.videos.forEach((id) => this.videos.add(id));
         if (r.layersUsed) r.layersUsed.forEach((id) => (this.layersUsed || (this.layersUsed = new Set())).add(id));
         return this;
     }
@@ -387,6 +404,7 @@ function play(words, real) {
             i += k * 8; break;
         }
         case OP.LAYER: { const L = layerById.get(u[i]); if (L) cv.blit(softLayer(L), f[i + 1], f[i + 2]); i += 3; break; }
+        case OP.VIDEO: i += 6; break; // The renderer reads the producer's shared frame.
         case OP.SCENE: i += 5; break; // GPU-only surface. Keep drawing the surrounding UI.
         case OP.IMAGE: { const im = imageById.get(u[i]); if (im && cv.drawImage) cv.drawImage(im.data, im.w, im.h, f[i + 2], f[i + 3], f[i + 4], f[i + 5]); i += 6; break; }
         case OP.CLIP: clip = [f[i], f[i + 1], f[i + 2], f[i + 3]]; i += 4; break;     // (software path: ignored)
@@ -400,4 +418,4 @@ function play(words, real) {
     return real;
 }
 
-module.exports = { Recorder, OP, pack, unpack, rampId, rampList, atlasId, atlasList, atlasById, makeLayer, dropLayer, layerById, play, softLayer, setImage, imageById, setScene, clearScene, sceneState };
+module.exports = { Recorder, OP, pack, unpack, rampId, rampList, atlasId, atlasList, atlasById, makeLayer, dropLayer, layerById, play, softLayer, setImage, imageById, setVideo, videoById, setScene, clearScene, sceneState };
