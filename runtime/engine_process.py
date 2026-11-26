@@ -2,6 +2,7 @@
 import argparse
 import json
 from pathlib import Path
+import platform
 import struct
 import sys
 import time
@@ -12,8 +13,10 @@ from audio import Audio
 from scenery import Scenery
 from frame_encoder import FrameEncoder
 
+DEFAULT_BACKEND = 'aot' if sys.platform == 'linux' and platform.machine() == 'x86_64' else 'unicorn'
 
-def run(original, data):
+
+def run(original, data, backend=DEFAULT_BACKEND):
     output = sys.stdout.buffer
     sys.stdout = sys.stderr
     def packet(kind, *parts):
@@ -26,7 +29,7 @@ def run(original, data):
     def texture(identifier,image):
         packet(b'TEX1',struct.pack('<III',identifier,image.width,image.height)+image.tobytes())
     try:
-        game = Game(original, data, render_size=(408, 720))
+        game = Game(original, data, render_size=(408, 720), backend=backend)
         encoder = None
         gpu_mode = False
         audio = Audio(game.jni.assets)
@@ -114,5 +117,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--original', type=Path, default=ORIGINAL)
     parser.add_argument('--data', type=Path, required=True)
+    parser.add_argument('--backend', choices=('aot', 'unicorn'), default=DEFAULT_BACKEND)
     args = parser.parse_args()
-    run(args.original, args.data)
+    run(args.original, args.data, args.backend)

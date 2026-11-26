@@ -1,4 +1,4 @@
-"""Build private Python 3.12 dependencies and the Linux x86-64 ARM-only runtime."""
+"""Build the Linux x86-64 game module and private Python 3.12 dependencies."""
 import importlib.util
 from pathlib import Path
 import shutil
@@ -27,6 +27,13 @@ def apply_unicorn_patch(source):
 
 
 def main():
+    original=ROOT.parent/'original/extracted/lib/armeabi-v7a/libDoodleJump.so'
+    if not original.is_file():
+        raise SystemExit('Verified game engine missing; run python3 tools/get_original.py first')
+    generated=ROOT/'data/recomp-build'
+    shutil.rmtree(generated,ignore_errors=True)
+    subprocess.run([sys.executable,str(ROOT.parent/'tools/recompile.py'),'--report',
+        '--original',str(original),'--output',str(generated)],check=True)
     sys.path.insert(0,str(ROOT.parent/'tools'))
     from store_build import download
     archive=download(UNICORN_URL,UNICORN_SHA256,ROOT/'data/unicorn-2.1.4.tar.gz')
@@ -38,6 +45,7 @@ def main():
     apply_unicorn_patch(source)
     shutil.rmtree(BUNDLE,ignore_errors=True)
     BUNDLE.mkdir()
+    (BUNDLE/'recomp').mkdir()
     subprocess.run([sys.executable,'-m','pip','install','--no-compile','--only-binary=:all:',
         '--platform','manylinux_2_27_x86_64','--platform','manylinux_2_24_x86_64',
         '--platform','manylinux2014_x86_64','--implementation','cp','--python-version','3.12',
@@ -76,14 +84,24 @@ cc -c -fPIC -O3 raster.c -o data/raster.o
 g++ -std=c++14 -shared -fPIC -O3 -pthread -static-libstdc++ -static-libgcc \
     dispatch.cpp image_memory.cpp graphics.cpp audio.cpp frame.cpp raster_parallel.cpp data/raster.o -o bundle/native.so
 strip --strip-unneeded bundle/native.so
+for source in data/recomp-build/*.c; do
+    cc -std=c11 -fPIC -fexceptions -fno-strict-aliasing -ffp-contract=off -O2 \
+        -Idata/recomp-build -Irecomp -c "$source" -o "${source%.c}.o"
+done
+g++ -std=c++14 -fPIC -fexceptions -fno-strict-aliasing -ffp-contract=off -O2 \
+    -Idata/recomp-build -Irecomp -c recomp/guest.cpp -o data/recomp-build/guest.o
+g++ -shared -static-libstdc++ -static-libgcc data/recomp-build/*.o -lm -o bundle/recomp/game.so
+strip --strip-unneeded bundle/recomp/game.so
 '''],check=True)
-    library=(BUNDLE/'site-packages/unicorn/lib/libunicorn.so.2').read_bytes()
-    assert library[:5]==b'\x7fELF\x02' and library[18:20]==b'\x3e\x00','Expected a Linux x86-64 library'
+    for path in (BUNDLE/'site-packages/unicorn/lib/libunicorn.so.2',BUNDLE/'recomp/game.so'):
+        library=path.read_bytes()
+        assert library[:5]==b'\x7fELF\x02' and library[18:20]==b'\x3e\x00','Expected a Linux x86-64 library'
     for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery','native_backend','frame_encoder'):
         shutil.copy2(ROOT/f'{name}.py',BUNDLE)
-    subprocess.run(['clang','-target','armv7-none-eabi','-c',str(ROOT/'arm_helpers.S'),'-o',str(ROOT/'arm_helpers.o')],check=True)
     for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','image_memory.cpp','image_memory.h','graphics.cpp','audio.cpp','frame.cpp','raster_parallel.cpp','prepare.py','unicorn-write-protect.patch','LICENSE'):
         shutil.copy2(ROOT/name,BUNDLE)
+    for name in ('__init__.py','machine.py','LICENSE','upstream.json'):
+        shutil.copy2(ROOT/'recomp'/name,BUNDLE/'recomp'/name)
     shutil.copy2(ROOT.parent/'NOTICE',BUNDLE/'NOTICE')
     shutil.copytree(ROOT/'licenses',BUNDLE/'licenses')
     (BUNDLE/'arm_helpers.o').touch()

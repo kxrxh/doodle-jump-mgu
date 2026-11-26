@@ -3,11 +3,19 @@ Doodle Jump MGU7 host
 Original Doodle Jump 3.10.0 (Android versionCode 3910006), game engine and assets:
 Copyright Lima Sky LLC and the original contributors. All original rights reserved.
 These proprietary files are not covered by the host's MIT license. No source release
-of the original engine is claimed. The ARM engine runs unchanged under Unicorn.
+of the original engine is claimed. The x86-64 game module is translated from the
+verified ARM engine; its translated game code remains proprietary. The original
+ARM engine is also retained for data loading and comparison with Unicorn.
 
 Original APK: https://cdn.didagame.com/20221115/doodle_jump_3.10.0_3910006.apk
 APK SHA-256: fb0e3c717f833a01085c251bd84b729c7e568a5319edbfa3c4a957d022361ddf
 Engine SHA-256: 4f92175d8ca5fcab546c0170803f80f7e7b37873b7c51241ef5a12c703fd8158
+
+The ARM/Thumb emitter and CPU helpers are adapted from iparecomp (MIT):
+https://github.com/sp00nznet/iparecomp
+Revision: 243b7d46c4f1f36ef2edb81089b30a73a93445ef
+Its original copyright and permission notice is retained in runtime/recomp/LICENSE
+(shipped as recomp/LICENSE), with source provenance in recomp/upstream.json.
 
 The Android message adapter follows the MIT-licensed doodlejump-vita port:
 https://github.com/RONIN0095/doodlejump-vita
@@ -28,7 +36,7 @@ https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.2.1/unicorn-2.1.4.
 The local unicorn-write-protect.patch (2026-11-16) refreshes cached translations
 after a handled write-protection callback. The patch and prepare.py build recipe ship with the
 runtime and are also in https://github.com/kxrxh/doodle-jump-mgu/tree/main/runtime.
-The C++ backend statically links GCC libstdc++ and libgcc (GPL-3.0-or-later
+The C++ components statically link GCC libstdc++ and libgcc (GPL-3.0-or-later
 with GCC Runtime Library Exception 3.1); their notices and license are in
 the runtime licenses directory.
 
@@ -61,6 +69,7 @@ The worker is GPL-3.0-or-later and retains the original renderer's MIT notice
 as LICENSE.mgu-renderd. Complete sources and the build recipe ship as
 doodle-gpu-source-2.1.0.tar.gz and are in native/doodle-gpu.
 
-Source builds download and verify the original APK and game assets. Ready app
-packages include those verified files; the source repository and runtime-only
-release do not include them.
+App source builds download and verify the original APK and game assets. Ready app
+packages include those files. The source repository excludes the original files;
+the runtime release includes the translated game module, while the app build adds
+the original ARM library and assets.

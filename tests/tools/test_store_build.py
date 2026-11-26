@@ -31,7 +31,9 @@ class StoreBuildTests(unittest.TestCase):
         build=self.module()
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk';out=root/'engine.pack'
-            runtime.write_bytes(pack({'engine_process.py':b'host','site-packages/elftools/__init__.py':b'ELF parser'}))
+            runtime_files={'engine_process.py':b'host','site-packages/elftools/__init__.py':b'ELF parser',
+                           'recomp/game.so':b'x86-64 module','recomp/LICENSE':b'original MIT notice'}
+            runtime.write_bytes(pack(runtime_files))
             kept={'assets/paper_L.png':b'paper','assets/fonts/doodlejumpfont_X.png':b'font',
                   'assets/Atlases/tutorial_X.atlas':b'atlas','assets/ninja/game_L.png':b'ninja',
                   'assets/jump.ogg':b'sound','lib/armeabi-v7a/libDoodleJump.so':b'engine'}
@@ -43,8 +45,11 @@ class StoreBuildTests(unittest.TestCase):
             build.assemble(runtime,apk,out)
             data=out.read_bytes();n=struct.unpack_from('<I',data,8)[0];base=12+n
             files=json.loads(zlib.decompress(data[12:base],-15))['files']
-            self.assertEqual(set(files),{'engine_process.py','site-packages/elftools/__init__.py','original/inventory.json'}|
+            self.assertEqual(set(files),set(runtime_files)|{'original/inventory.json'}|
                              {'original/extracted/'+name for name in kept})
+            for name,value in runtime_files.items():
+                off,size=files[name]
+                self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),value)
             for name,value in kept.items():
                 off,size=files['original/extracted/'+name]
                 self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),value)

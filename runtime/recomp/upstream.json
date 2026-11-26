@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/sp00nznet/iparecomp",
+  "commit": "243b7d46c4f1f36ef2edb81089b30a73a93445ef",
+  "files": [
+    "tools/lifter.py",
+    "runtime/arm32_context.h"
+  ]
+}

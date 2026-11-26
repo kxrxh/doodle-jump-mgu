@@ -387,7 +387,8 @@ class LibC:
     def longjmp(self):
         context = self.jumps[self.m.arg(0)]
         value = self.m.arg(1) or 1
-        self.m.uc.context_restore(context)
+        restore = getattr(self.m.uc, 'context_jump', self.m.uc.context_restore)
+        restore(context)
         return value
 
     def format(self, template, start, pointer=None):

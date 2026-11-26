@@ -6,6 +6,7 @@ Run commands from the repository root.
 | --- | --- |
 | `apps/kxrxh_doodle_jump/` | MGU app, controls, and engine client |
 | `runtime/` | Python host, C++ backend, and runtime assets |
+| `runtime/recomp/` | ARM/Thumb translator, native guest bridge, and iparecomp provenance |
 | `native/doodle-gpu/` | Independent GPU presentation worker |
 | `kit/` | MGU toolkit subset and browser emulator |
 | `tools/` | Build scripts and pinned dependencies |
@@ -51,11 +52,33 @@ node kit/tools/test_runtime.js
 ## Rebuild runtime or GPU support
 
 After runtime changes, build Linux x86-64 dependencies for Store's Python 3.12.
-Requires Docker and clang. Unicorn includes only its ARM guest backend.
+Requires Python 3.13, Docker, clang, and the verified game files from local preview
+setup. Runtime preparation uses the cached engine; it does not download the game.
 
 ```sh
+.venv/bin/python -m pip install -r runtime/recomp/requirements.txt
 .venv/bin/python runtime/prepare.py
 ```
+
+This translates the pinned ARM engine with the adapted iparecomp emitter and
+builds `recomp/game.so` against glibc 2.27. `entries.json` supplies SHA-bound
+entry points observed in all 12 themes. Unicorn remains available as a comparison
+backend, with only its ARM guest backend built.
+
+On Linux x86-64, verify the module against Unicorn and measure each backend with
+the same Python environment and machine:
+
+```sh
+cp runtime/bundle/recomp/game.so runtime/recomp/game.so
+PYTHONPATH=runtime .venv/bin/python -m unittest discover -s tests/recomp -v
+PYTHONPATH=runtime .venv/bin/python tools/benchmark_recomp.py --backend unicorn --theme 1
+PYTHONPATH=runtime .venv/bin/python tools/benchmark_recomp.py --backend aot --theme 1
+```
+
+The benchmark reports uncapped engine FPS, frame times, peak process RSS, and an
+output checksum. It includes GPU command capture and sound mixing, and excludes
+the GPU worker, compositor, and physical MGU. Compare output checksums as well as
+timing; local results do not establish the car's frame rate.
 
 Publish `dist/runtime-linux-x86_64.pack` and update `tools/runtime.json` with its
 URL, size, and SHA-256 before building the app.

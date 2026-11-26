@@ -17,8 +17,8 @@ ORIGINAL = DIRECTORY / 'original' if (DIRECTORY / 'original').is_dir() else DIRE
 
 
 class Game:
-    def __init__(self, original=ORIGINAL, data=Path(__file__).resolve().parent / 'data', render_size=None):
-        self.machine = m = Arm(original / 'extracted/lib/armeabi-v7a/libDoodleJump.so')
+    def __init__(self, original=ORIGINAL, data=Path(__file__).resolve().parent / 'data', render_size=None, backend='unicorn'):
+        self.machine = m = Arm(original / 'extracted/lib/armeabi-v7a/libDoodleJump.so', backend=backend)
         self.libc = LibC(m)
         m.initialize()
         self.jni = j = Jni(m, original / 'extracted/assets', data)

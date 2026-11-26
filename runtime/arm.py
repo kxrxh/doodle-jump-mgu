@@ -46,10 +46,17 @@ DispatchFallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint
 
 
 class Arm:
-    def __init__(self, library):
+    def __init__(self, library, backend='unicorn'):
         if hashlib.sha256(library.read_bytes()).hexdigest() != ENGINE_SHA256:
             raise ValueError('Expected the unmodified Doodle Jump 3.10.0 ARMv7 engine')
-        self.uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        if backend == 'unicorn':
+            self.uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        elif backend == 'aot':
+            from recomp.machine import Machine
+            self.uc = Machine(ENGINE_SHA256)
+        else:
+            raise ValueError('Unknown game engine backend')
+        self.backend = backend
         self.uc.mem_map(STUB, 0x100000)
         self.native_imports = self._native_helpers()
         self.uc.mem_map(STACK, 0x800000)
@@ -92,7 +99,7 @@ class Arm:
         self._native.dispatch_release_image.restype = ctypes.c_int
         self._native.dispatch_before_write.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t]
         self._native.dispatch_before_write.restype = ctypes.c_int
-        api = GuestApi(*(ctypes.cast(getattr(uclib, 'uc_' + name), ctypes.c_void_p) for name in
+        api = self.uc.api(GuestApi) if backend == 'aot' else GuestApi(*(ctypes.cast(getattr(uclib, 'uc_' + name), ctypes.c_void_p) for name in
             ('reg_read', 'reg_write', 'mem_read', 'mem_write', 'hook_add', 'hook_del', 'emu_stop',
              'mem_map_ptr', 'mem_unmap', 'mem_protect')),
             (ctypes.c_int * 7)(*REGS, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC))
@@ -343,12 +350,18 @@ class Arm:
                 else:
                     self.put32(stack + (i - 4) * 4, value)
             self.uc.reg_write(UC_ARM_REG_LR, RETURN)
-            self.uc.emu_start(address, RETURN)
+            fault = None
+            try:
+                self.uc.emu_start(address, RETURN)
+            except RuntimeError as error:
+                fault = error
             if self._dispatch_errors[-1] is not None:
                 raise self._dispatch_errors[-1]
             error = self._native.dispatch_error(self.native)
             if error:
                 raise RuntimeError(error.decode())
+            if fault is not None:
+                raise fault
             if self.uc.reg_read(UC_ARM_REG_PC) != RETURN:
                 raise RuntimeError(f'Engine call instruction limit at {self.uc.reg_read(UC_ARM_REG_PC):#x}')
             return self.uc.reg_read(UC_ARM_REG_R0)

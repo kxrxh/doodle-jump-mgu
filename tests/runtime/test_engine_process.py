@@ -82,13 +82,15 @@ class ProcessTests(unittest.TestCase):
                             'sent panorama images must not stay resident between frames')
 
         output = SimpleNamespace(buffer=io.BytesIO())
-        with patch.object(engine_process, 'Game', return_value=game), \
+        with patch.object(engine_process, 'Game', return_value=game) as factory, \
              patch.object(engine_process, 'Audio'), \
              patch.object(engine_process, 'Scenery', return_value=Scenery()), \
              patch.object(engine_process, 'FrameEncoder') as encoder, \
              patch.multiple(engine_process.sys, stdin=commands(), stdout=output, stderr=io.StringIO()):
             encoder.return_value.encode.return_value = b'frame'
             engine_process.run(Path('.'), Path('.'))
+        factory.assert_called_once_with(Path('.'), Path('.'), render_size=(408, 720),
+                                        backend=engine_process.DEFAULT_BACKEND)
 
 
 if __name__ == '__main__':
