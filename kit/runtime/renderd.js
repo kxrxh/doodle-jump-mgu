@@ -353,8 +353,8 @@ class RenderClient extends EventEmitter {
         if (previous && previous.ver===im.ver) return;
         if (this.native) {
             if (!this.info || !this.info.pixmaps || im.w>2048 || im.h>2048) throw new Error('Native renderer does not support this pixel image');
-            const resized=!previous || previous.w!==im.w || previous.h!==im.h;
-            if (resized) this._write(this._u32msg(X.PIXMAP,[id,im.w,im.h,1,0]));
+            const resized=!previous || previous.w!==im.w || previous.h!==im.h || previous.filter!==im.filter;
+            if (resized) this._write(this._u32msg(X.PIXMAP,[id,im.w,im.h,1,im.filter]));
             const full=im.w*im.h*4;
             let patches=!resized && previous.ver===im.patchBaseVer ? im.patches : null,n=0;
             if (!Array.isArray(patches) || !patches.length || patches.length>64) patches=null;
@@ -376,7 +376,7 @@ class RenderClient extends EventEmitter {
                 p.data.copy(b,offset);offset+=p.data.length;
             });
             this._write(b);
-            this.sent.image.set(id,{ver:im.ver,w:im.w,h:im.h});
+            this.sent.image.set(id,{ver:im.ver,w:im.w,h:im.h,filter:im.filter});
             return;
         }
         const n = im.w * im.h * 4, b = this._imageBuf(8 + 12 + n);
@@ -384,7 +384,7 @@ class RenderClient extends EventEmitter {
         b.writeUInt32LE(id, 8); b.writeUInt32LE(im.w, 12); b.writeUInt32LE(im.h, 16);
         Buffer.from(im.data.buffer, im.data.byteOffset, n).copy(b, 20);
         this._write(b);
-        this.sent.image.set(id, {ver:im.ver,w:im.w,h:im.h});
+        this.sent.image.set(id, {ver:im.ver,w:im.w,h:im.h,filter:im.filter});
     }
     _ensureLayer(id) {
         if (this.sent.layer.has(id)) return;

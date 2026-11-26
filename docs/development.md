@@ -62,23 +62,25 @@ setup. Runtime preparation uses the cached engine; it does not download the game
 
 This translates the pinned ARM engine with the adapted iparecomp emitter and
 builds `recomp/game.so` against glibc 2.27. `entries.json` supplies SHA-bound
-entry points observed in all 12 themes. Unicorn remains available as a comparison
-backend, with only its ARM guest backend built.
+entry points observed in all 12 themes. Production packages contain no Unicorn.
 
 On Linux x86-64, verify the module against Unicorn and measure each backend with
 the same Python environment and machine:
 
 ```sh
 cp runtime/bundle/recomp/game.so runtime/recomp/game.so
-PYTHONPATH=runtime .venv/bin/python -m unittest discover -s tests/recomp -v
-PYTHONPATH=runtime .venv/bin/python tools/benchmark_recomp.py --backend unicorn --theme 1
-PYTHONPATH=runtime .venv/bin/python tools/benchmark_recomp.py --backend aot --theme 1
+.venv/bin/python tools/prepare_unicorn.py
+export PYTHONPATH=runtime:runtime/data/oracle/site-packages
+.venv/bin/python -m unittest discover -s tests/recomp -v
+.venv/bin/python tools/benchmark_recomp.py --backend unicorn --theme 1
+.venv/bin/python tools/benchmark_recomp.py --backend aot --theme 1
 ```
 
 The benchmark reports uncapped engine FPS, frame times, peak process RSS, and an
 output checksum. It includes GPU command capture and sound mixing, and excludes
 the GPU worker, compositor, and physical MGU. Compare output checksums as well as
-timing; local results do not establish the car's frame rate.
+timing; local results do not establish the car's frame rate. The patched development
+oracle is kept in `runtime/data/oracle/` and never copied into the production pack.
 
 Publish `dist/runtime-linux-x86_64.pack` and update `tools/runtime.json` with its
 URL, size, and SHA-256 before building the app.

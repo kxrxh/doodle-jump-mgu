@@ -1,5 +1,5 @@
 """Extend the original paper and sprite art into the MGU screen's margins."""
-import ctypes
+import math
 from pathlib import Path
 
 from PIL import Image
@@ -21,6 +21,8 @@ class Scenery:
     def __init__(self,game):
         self.game=game
         self.key=None
+        self.asset_key=None
+        self.projection=None
         self.sprites={}
 
     def assets(self):
@@ -39,20 +41,22 @@ class Scenery:
 
     def paper(self,width):
         g=self.game.graphics
-        if not g.background_info or not width:
+        background=g.background_info
+        if not background or not width:
+            self.projection=None
             return []
-        identifier,vertices=g.background_info
+        identifier,vertices=background
         texture=g.texture_info(identifier)
-        key=(identifier,id(texture['pixels']),vertices,width)
-        if key==self.key:
-            return []
-        self.key=key
-        with Image.open(Jni.path(self.game.jni.assets,texture['asset'])) as original:
-            content=original.size
-        source=Image.frombytes('RGBA',(texture['width'],texture['height']),texture['pixels']).crop((0,0,*content))
-        pixels=source.tobytes()
+        asset_key=(identifier,texture['revision'],texture['asset'])
+        if asset_key!=self.asset_key:
+            with Image.open(Jni.path(self.game.jni.assets,texture['asset'])) as original:
+                self.content=original.size
+            self.asset_key=asset_key
+        content=self.content
         left,top=min(v[0] for v in vertices),min(v[1] for v in vertices)
         right,bottom=max(v[0] for v in vertices),max(v[1] for v in vertices)
+        if right<=left or bottom<=top:
+            raise ValueError('Invalid paper geometry')
         corner=lambda x,y:min(vertices,key=lambda v:(v[0]-x)**2+(v[1]-y)**2)
         tl,tr,bl=corner(left,top),corner(right,top),corner(left,bottom)
         du=(tr[2]-tl[2])/(right-left)*texture['width']/content[0]
@@ -60,15 +64,29 @@ class Scenery:
         u=tl[2]*texture['width']/content[0]-left*du
         v=tl[3]*texture['height']/content[1]-top*dv
         color=tl[4:]
-        def render(offset):
-            height=g.logical_height
-            image=bytearray(width*height*4)
-            pointer=(ctypes.c_uint8*len(image)).from_buffer(image)
-            corners=[(0,0,u+offset*du,v,*color),(width,0,u+(offset+width)*du,v,*color),
-                     (0,height,u+offset*du,v+height*dv,*color),
-                     (width,height,u+(offset+width)*du,v+height*dv,*color)]
-            triangles=[corners[i] for i in (0,1,2,2,1,3)]
-            data=(ctypes.c_float*48)(*(number for vertex in triangles for number in vertex))
-            g.native(pointer,width,height,data,6,ctypes.c_char_p(pixels),content[0],content[1],1,1,1,0,1,0,0)
-            return Image.frombytes('RGBA',(width,height),bytes(image))
-        return [(2,render(-width)),(3,render(g.logical_width))]
+        if not all(math.isfinite(n) for n in (u,v,du,dv,*color)) or not du or not dv:
+            raise ValueError('Invalid paper projection')
+        self.projection=dict(width=content[0],height=content[1],
+            u=(u if du>0 else -u)%1,v=(v if dv>0 else -v)%1,
+            du=abs(du),dv=abs(dv),alpha=max(0,min(1,color[3])))
+        key=(asset_key,color[:3],du<0,dv<0)
+        if key==self.key:
+            return []
+        source=Image.frombytes('RGBA',(texture['width'],texture['height']),texture['pixels']).crop((0,0,*content))
+        if color[:3]!=(1,1,1):
+            source=source.point([min(255,max(0,int(value*factor+.5)))
+                for factor in (*color[:3],1) for value in range(256)])
+        if du<0:source=source.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if dv<0:source=source.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        # Wrapped border texels let ordinary linear-filtered images tile without seams.
+        w,h=content
+        image=Image.new('RGBA',(w+2,h+2))
+        image.paste(source,(1,1))
+        image.paste(source.crop((w-1,0,w,h)),(0,1))
+        image.paste(source.crop((0,0,1,h)),(w+1,1))
+        image.paste(source.crop((0,h-1,w,h)),(1,0))
+        image.paste(source.crop((0,0,w,1)),(1,h+1))
+        for x,y in ((0,0),(w+1,0),(0,h+1),(w+1,h+1)):
+            image.putpixel((x,y),source.getpixel(((x-1)%w,(y-1)%h)))
+        self.key=key
+        return [(2,image.convert('RGBa'))]

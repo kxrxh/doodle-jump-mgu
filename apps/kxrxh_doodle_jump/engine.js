@@ -232,7 +232,16 @@ class Engine {
                     this.frameTiming = event;
                 }
                 else if (event.type === 'dialog' && this.onDialog) this.onDialog(event);
-                else if (event.type === 'scenery') Object.assign(this.scenery,event);
+                else if (event.type === 'scenery') {
+                    const p=event.paper;
+                    if (p!==undefined && p!==null && (
+                        !Number.isInteger(p.width) || !Number.isInteger(p.height) ||
+                        p.width<1 || p.height<1 || p.width>2046 || p.height>2046 ||
+                        !['u','v','du','dv','alpha'].every(key=>Number.isFinite(p[key])) ||
+                        p.u<0 || p.u>=1 || p.v<0 || p.v>=1 || p.du<=0 || p.dv<=0 || p.alpha<0 || p.alpha>1))
+                        throw new Error('Invalid paper projection');
+                    Object.assign(this.scenery,event);
+                }
             } else {
                 const incremental = type === 'FRM2';
                 if (!incremental && type !== 'FRM1') throw new Error('Unknown engine packet type');

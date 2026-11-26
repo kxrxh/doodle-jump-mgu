@@ -43,7 +43,7 @@ class RecompiledGameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as left, tempfile.TemporaryDirectory() as right:
             with patch('libc.time.time', return_value=1700000000):
                 reference = Game(ROOT / 'original', Path(left), render_size=(408, 720))
-                with patch('arm.Uc', side_effect=AssertionError('AOT must not create an emulator')):
+                with patch('unicorn.Uc', side_effect=AssertionError('AOT must not create an emulator')):
                     candidate = Game(ROOT / 'original', Path(right), render_size=(408, 720), backend='aot')
             self.assertEqual(candidate.machine.backend, 'aot')
             for frame in range(8):
@@ -65,7 +65,7 @@ class RecompiledGameTests(unittest.TestCase):
                 with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), \
                         patch('libc.time.time', return_value=1700000000):
                     reference = Game(ROOT / 'original', Path(left), render_size=(408, 720))
-                    with patch('arm.Uc', side_effect=AssertionError('AOT must not create an emulator')):
+                    with patch('unicorn.Uc', side_effect=AssertionError('AOT must not create an emulator')):
                         candidate = Game(ROOT / 'original', Path(right), render_size=(408, 720), backend='aot')
                     sounds = [Audio(game.jni.assets, playback=False) for game in (reference, candidate)]
                     for game, audio in zip((reference, candidate), sounds):
@@ -94,67 +94,77 @@ class RecompiledGameTests(unittest.TestCase):
                 gc.collect()
 
     def test_game_over_save_and_restart_match_unicorn(self):
-        with tempfile.TemporaryDirectory() as left, tempfile.TemporaryDirectory() as right, \
-                open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), \
-                patch('libc.time.time', return_value=1700000000):
-            for directory in (left, right):
-                (Path(directory) / 'appdata.i3d').write_text('<DoodleJumpHScore value="10000" />\n')
-            games = [Game(ROOT / 'original', Path(left), render_size=(408, 720)),
-                     Game(ROOT / 'original', Path(right), render_size=(408, 720), backend='aot')]
-            sounds = [Audio(game.jni.assets, playback=False) for game in games]
-            for game, audio in zip(games, sounds):
-                game.jni.audio = audio
-            frame = 0
+        for theme in THEMES:
+            with self.subTest(theme=theme):
+                with tempfile.TemporaryDirectory() as left, tempfile.TemporaryDirectory() as right, \
+                        open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), \
+                        patch('libc.time.time', return_value=1700000000):
+                    for directory in (left, right):
+                        (Path(directory) / 'appdata.i3d').write_text(
+                            '<DoodleJumpHScore value="10000" />\n'
+                            f'<DoodleJumpActiveTheme value="{theme}" />\n'
+                            f'<DoodleJumpDefaultTheme value="{theme}" />\n')
+                    games = [Game(ROOT / 'original', Path(left), render_size=(408, 720)),
+                             Game(ROOT / 'original', Path(right), render_size=(408, 720), backend='aot')]
+                    sounds = [Audio(game.jni.assets, playback=False) for game in games]
+                    for game, audio in zip(games, sounds):
+                        game.jni.audio = audio
+                    frame = 0
 
-            def step(tilt=0, touches=()):
-                nonlocal frame
-                commands, samples = [], []
-                for game, audio in zip(games, sounds):
-                    game.graphics.begin_gpu_frame(True, reset=frame == 0)
-                    game.step(tilt=tilt, touches=touches, readback=False)
-                    commands.append(game.graphics.gpu_frame())
-                    samples.append(audio.mix(800).tobytes())
-                self.assertEqual(commands[1], commands[0], f'frame {frame}: graphics')
-                self.assertEqual(samples[1], samples[0], f'frame {frame}: PCM')
-                self.assertEqual(games[1].jni.playing, games[0].jni.playing)
-                frame += 1
+                    def step(tilt=0, touches=()):
+                        nonlocal frame
+                        commands, samples = [], []
+                        for game, audio in zip(games, sounds):
+                            game.graphics.begin_gpu_frame(True, reset=frame == 0)
+                            game.step(tilt=tilt, touches=touches, readback=False)
+                            commands.append(game.graphics.gpu_frame())
+                            samples.append(audio.mix(800).tobytes())
+                        self.assertEqual(commands[1], commands[0], f'frame {frame}: graphics')
+                        self.assertEqual(samples[1], samples[0], f'frame {frame}: PCM')
+                        self.assertEqual(games[1].jni.playing, games[0].jni.playing)
+                        frame += 1
 
-            def tap(x, y):
-                step(touches=[(0, 0, x, y)])
-                step(touches=[(0, 2, x, y)])
+                    def tap(x, y):
+                        step(touches=[(0, 0, x, y)])
+                        step(touches=[(0, 2, x, y)])
 
-            try:
-                for _ in range(240):
-                    step()
-                tap(180, 295)
-                for _ in range(120):
-                    step()
-                    if games[0].jni.playing:
-                        break
-                self.assertTrue(games[1].jni.playing)
-                for _ in range(900):
-                    step(tilt=1)
-                    if not games[0].jni.playing:
-                        break
-                self.assertFalse(games[1].jni.playing)
-                for _ in range(90):
-                    step()
-                for x, y in ((275, 760), (381, 760), (60, 920)):
-                    tap(x, y)
-                for _ in range(60):
-                    step()
-                tap(272, 665)
-                for _ in range(120):
-                    step()
-                    if games[0].jni.playing:
-                        break
-                self.assertTrue(games[1].jni.playing)
-                files = [{path.name: path.read_bytes() for path in Path(directory).iterdir()}
-                         for directory in (left, right)]
-                self.assertEqual(files[1], files[0])
-            finally:
-                for audio in sounds:
-                    audio.close()
+                    try:
+                        for _ in range(240):
+                            step()
+                        tap(180, 295)
+                        for _ in range(120):
+                            step()
+                            if games[0].jni.playing:
+                                break
+                        self.assertTrue(games[1].jni.playing)
+                        for _ in range(1200):
+                            step(tilt=1)
+                            if not games[0].jni.playing:
+                                break
+                        self.assertFalse(games[0].jni.playing, 'The reference did not reach game over')
+                        self.assertFalse(games[1].jni.playing)
+                        for _ in range(90):
+                            step()
+                        for x, y in ((275, 760), (381, 760), (60, 920)):
+                            tap(x, y)
+                        for _ in range(60):
+                            step()
+                        # The 8-bit theme places its replay button lower.
+                        tap(272, 742 if theme == 14 else 665)
+                        for _ in range(120):
+                            step()
+                            if games[0].jni.playing:
+                                break
+                        self.assertTrue(games[1].jni.playing)
+                        self.assertTrue(games[0].jni.playing, 'The reference replay did not start the game')
+                        files = [{path.name: path.read_bytes() for path in Path(directory).iterdir()}
+                                 for directory in (left, right)]
+                        self.assertEqual(files[1], files[0])
+                    finally:
+                        for audio in sounds:
+                            audio.close()
+                        del games, sounds, game, audio
+                        gc.collect()
 
 
 if __name__ == '__main__':

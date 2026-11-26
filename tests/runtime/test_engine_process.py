@@ -22,6 +22,38 @@ class ProcessTests(unittest.TestCase):
             data = data[8 + size:]
         return packets
 
+    def test_paper_scroll_sends_projection_without_reuploading_pixels(self):
+        game = SimpleNamespace(
+            graphics=SimpleNamespace(begin_gpu_frame=lambda *args:None, gpu_frame=lambda:b'frame'),
+            jni=SimpleNamespace(assets=Path('.'),dialogs=[],playing=False),
+            step=lambda *args,**kwargs:None)
+
+        class Scenery:
+            sprites = {}
+            projection = None
+            frames = 0
+            def assets(self):return []
+            def paper(self,width):
+                self.frames += 1
+                self.projection = dict(width=2,height=2,u=0,v=(self.frames-1)*.25,
+                                       du=1/544,dv=1/960,alpha=1) if width else None
+                return [(2,Image.new('RGBa',(4,4)))] if self.frames==1 else []
+
+        commands = [dict(frame=True,gpu=True,side_width=width) for width in (1008,1008,0)]
+        output = SimpleNamespace(buffer=io.BytesIO())
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(engine_process,'Game',return_value=game), \
+             patch.object(engine_process,'Audio'), \
+             patch.object(engine_process,'Scenery',return_value=Scenery()), \
+             patch.multiple(engine_process.sys,stdin=iter(json.dumps(c)+'\n' for c in commands),
+                            stdout=output,stderr=io.StringIO()):
+            engine_process.run(Path('.'),Path(directory))
+        packets=self.packets(output.buffer.getvalue())
+        self.assertEqual(sum(kind==b'TEX1' for kind,_ in packets),1)
+        events=[json.loads(body) for kind,body in packets if kind==b'EVT1']
+        projections=[event['paper'] for event in events if event['type']=='scenery' and 'paper' in event]
+        self.assertEqual([p['v'] if p else None for p in projections],[0,.25,None])
+
     def test_gpu_frames_skip_pixel_encoding_and_switch_back_to_a_full_image(self):
         from audio import Audio
         from game import ORIGINAL
@@ -68,6 +100,7 @@ class ProcessTests(unittest.TestCase):
 
         class Scenery:
             sprites = {}
+            projection = None
             def assets(self):
                 return []
             def paper(self, width):

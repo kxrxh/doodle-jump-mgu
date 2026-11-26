@@ -7,14 +7,14 @@ import subprocess
 import weakref
 
 from elftools.elf.elffile import ELFFile
-from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_BLOCK, UC_HOOK_MEM_WRITE_PROT
-from unicorn.arm_const import (
-    UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
-    UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_C1_C0_2,
-    UC_ARM_REG_FPEXC, UC_ARM_REG_CPSR,
-)
-from unicorn.unicorn_py3.unicorn import uclib
 from native_backend import library as native_library
+
+
+# Shared GuestApi IDs follow Unicorn 2.x; the native bridge uses the same ABI.
+UC_HOOK_CODE, UC_HOOK_BLOCK, UC_HOOK_MEM_WRITE_PROT = 4, 8, 256
+UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3 = 66, 67, 68, 69
+UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC = 12, 10, 11
+UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC, UC_ARM_REG_CPSR = 111, 4, 3
 
 
 BASE = 0x10000000
@@ -50,10 +50,14 @@ class Arm:
         if hashlib.sha256(library.read_bytes()).hexdigest() != ENGINE_SHA256:
             raise ValueError('Expected the unmodified Doodle Jump 3.10.0 ARMv7 engine')
         if backend == 'unicorn':
+            from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM
+            from unicorn.unicorn_py3.unicorn import uclib
             self.uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+            self._execution_errors = (UcError,)
         elif backend == 'aot':
             from recomp.machine import Machine
             self.uc = Machine(ENGINE_SHA256)
+            self._execution_errors = ()
         else:
             raise ValueError('Unknown game engine backend')
         self.backend = backend
@@ -108,12 +112,12 @@ class Arm:
                                                    STUB, RETURN - 1, self._fallback, None)
         if not self.native:
             raise RuntimeError('Cannot create native ARM host dispatcher')
-        # Register after Unicorn's own finalizer so hooks are removed before uc_close.
+        # Remove hooks before the guest's finalizer frees its memory.
         weakref.finalize(self.uc, self._native.dispatch_destroy, self.native)
         self.uc._native_dispatch_keepalive = (self._native, self._fallback)
         write, native, context = self.uc.mem_write, self._native, self.native
         def write_memory(address, data):
-            # Unicorn's host API bypasses guest page protection.
+            # Host writes bypass guest page protection.
             if address < IMAGE_LIMIT and address + len(data) > IMAGE_HEAP:
                 if native.dispatch_before_write(context, address, len(data)):
                     raise RuntimeError(native.dispatch_error(context).decode())
@@ -365,7 +369,7 @@ class Arm:
             if self.uc.reg_read(UC_ARM_REG_PC) != RETURN:
                 raise RuntimeError(f'Engine call instruction limit at {self.uc.reg_read(UC_ARM_REG_PC):#x}')
             return self.uc.reg_read(UC_ARM_REG_R0)
-        except UcError as error:
+        except self._execution_errors as error:
             raise RuntimeError(f'ARM fault PC={self.uc.reg_read(UC_ARM_REG_PC):#x} '
                                f'LR={self.uc.reg_read(UC_ARM_REG_LR):#x}: {error}') from error
         finally:

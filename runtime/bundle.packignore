@@ -1,5 +1,4 @@
 site-packages/bin/*
-site-packages/unicorn/lib/libunicorn.a
 # Game text uses its PNG atlas, with no AVIF, WebP, color management or TrueType calls.
 site-packages/PIL/_avif*
 site-packages/PIL/_webp*

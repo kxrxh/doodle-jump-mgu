@@ -38,6 +38,7 @@ def run(original, data, backend=DEFAULT_BACKEND):
         for identifier,image in scenery.assets():
             texture(identifier,image)
         event(dict(type='scenery',sprites=scenery.sprites))
+        paper_projection = None
         state = Input()
         event(dict(type='ready'))
         paused = False
@@ -85,9 +86,12 @@ def run(original, data, backend=DEFAULT_BACKEND):
             planes=scenery.paper(side_width)
             for identifier,plane in planes:
                 texture(identifier,plane)
+            if scenery.projection != paper_projection:
+                paper_projection = scenery.projection
+                event(dict(type='scenery',paper=paper_projection))
             if planes:
-                event(dict(type='scenery',paperWidth=side_width))
-                del planes, plane
+                del plane
+            del planes
             while game.jni.dialogs:
                 event(game.jni.dialogs.pop(0))
             if game.jni.playing != playing:

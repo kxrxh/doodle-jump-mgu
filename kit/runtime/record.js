@@ -62,14 +62,15 @@ function atlasById(id) { const a = atlasList.find((x) => x.id === id); return a 
 // pixel images (e.g. a game's frame): id -> { w, h, data (RGBA bytes), ver };
 // a frame records id + ver, so a changed picture is a changed frame, and the transport uploads it
 const imageById = new Map();
-function setImage(id, w, h, data, patches) {
+function setImage(id, w, h, data, patches, filter=0) {
+    if (filter!==0 && filter!==1) throw new Error('Invalid image filter');
     const im = imageById.get(id) || { ver: 0 };
     w |= 0; h |= 0;
-    const same = im.w === w && im.h === h && im.data === data;
+    const same = im.w === w && im.h === h && im.data === data && im.filter === filter;
     // A slower renderer may still need the last changed frame's patches.
     if (same && Array.isArray(patches) && !patches.length) return im;
     im.patchBaseVer = im.ver; im.patches = same ? patches : null;
-    im.w = w; im.h = h; im.data = data; im.ver = (im.ver + 1) >>> 0;
+    im.w = w; im.h = h; im.data = data; im.filter = filter; im.ver = (im.ver + 1) >>> 0;
     imageById.set(id, im);
     return im;
 }
@@ -150,7 +151,7 @@ class Recorder {
     target(x, y, w, h, run, key, r) { this.targets.push({ x, y, w, h, run, key: String(key), r }); return this; }
 
     /* ---------- canvas.js API ---------- */
-    /** Draw pixel image `id` (see setImage) scaled into x, y, w, h (nearest pixel). */
+    /** Draw pixel image `id` (see setImage) scaled into x, y, w, h. */
     image(id, x, y, w, h) {
         const im = imageById.get(id);
         if (!im || !(w > 0 && h > 0)) return this;
@@ -406,8 +407,13 @@ function play(words, real) {
         case OP.LAYER: { const L = layerById.get(u[i]); if (L) cv.blit(softLayer(L), f[i + 1], f[i + 2]); i += 3; break; }
         case OP.VIDEO: i += 6; break; // The renderer reads the producer's shared frame.
         case OP.SCENE: i += 5; break; // GPU-only surface. Keep drawing the surrounding UI.
-        case OP.IMAGE: { const im = imageById.get(u[i]); if (im && cv.drawImage) cv.drawImage(im.data, im.w, im.h, f[i + 2], f[i + 3], f[i + 4], f[i + 5]); i += 6; break; }
-        case OP.CLIP: clip = [f[i], f[i + 1], f[i + 2], f[i + 3]]; i += 4; break;     // (software path: ignored)
+        case OP.IMAGE: {
+            const im=imageById.get(u[i]);
+            if(im&&alpha>0&&cv.drawImage)cv.drawImage(im.data,im.w,im.h,f[i+2],f[i+3],f[i+4],f[i+5],
+                {clip,alpha,linear:im.filter===1,premultiplied:true});
+            i+=6;break;
+        }
+        case OP.CLIP: clip = [f[i], f[i + 1], f[i + 2], f[i + 3]]; i += 4; break;
         case OP.NOCLIP: clip = null; break;
         case OP.ALPHA: alpha = f[i]; i += 1; break;
         case OP.XF: cv = f[i] > 0 ? NOP : real; i += 3; break;

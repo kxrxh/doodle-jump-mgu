@@ -46,7 +46,7 @@ mgu.run({
         };
         engine.onGPUError = () => { updateGPU(); queueFrame(); };
         engine.onGPUState = () => { updateGPU(); queueFrame(); };
-        engine.onTexture = (id,w,h,rgba) => setImage(id,w,h,rgba);
+        engine.onTexture = (id,w,h,rgba) => setImage(id,w,h,rgba,undefined,id===2?1:0);
         engine.onError = (e) => { error = e; sync(); menu(); };
         engine.onDialog = (request) => {
             dialog = request;

@@ -24,18 +24,20 @@ See runtime/LICENSE (shipped as LICENSE in the engine runtime) for its required
 copyright and permission notice.
 
 The host uses mgu-store's CPython 3.12 (Python Software Foundation License).
-Its private runtime includes Unicorn
-(GPL-2.0 and its included dependency notices), pyelftools (public domain),
+Its private runtime includes pyelftools (public domain),
 Pillow (MIT-CMU and included third-party notices), miniaudio (MIT), cffi and
 pycparser (MIT). Their original license files remain inside each installed package;
 mgu-python provides CPython's license files. The MGU toolkit retains its existing
-license notices. Unicorn runs on Linux x86-64 with only its ARM guest backend built.
-Its pinned 2.1.4 source is available at
+license notices.
+
+Unicorn is a development-only comparison backend, excluded from production
+packages. Its GPL-2.0 and included dependency notices remain in the development
+installation. The pinned 2.1.4 source is available at
 https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.2.1/unicorn-2.1.4.tar.gz
 (SHA-256: 00567a70e323f749b419cd86bee4f9115beab7ebba32194581c090cbb7c59cff).
 The local unicorn-write-protect.patch (2026-11-16) refreshes cached translations
-after a handled write-protection callback. The patch and prepare.py build recipe ship with the
-runtime and are also in https://github.com/kxrxh/doodle-jump-mgu/tree/main/runtime.
+after a handled write-protection callback. The patch and tools/prepare_unicorn.py
+build recipe are retained in the source repository.
 The C++ components statically link GCC libstdc++ and libgcc (GPL-3.0-or-later
 with GCC Runtime Library Exception 3.1); their notices and license are in
 the runtime licenses directory.
@@ -49,7 +51,9 @@ host's _X font atlas and the original _L images for every theme. Included gamepl
 textures retain their original bytes, and all game sounds are retained.
 
 Peripheral scenery uses crops of the original gametiles_L.png and live bck_ paper;
-crop coordinates and paper projection are recorded in scenery.py. The added app
+crop coordinates and paper projection are recorded in scenery.py. Wrapped source
+texels and the renderer's public linear filter preserve the repeating paper edges.
+The added app
 icon and cursor are separate new assets. Shipping PNG files retain their creation prompts in metadata.
 
 MGU toolkit: https://github.com/cauliflowermossgrape/idrive7-apps

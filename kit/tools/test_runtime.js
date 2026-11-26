@@ -127,6 +127,81 @@ test('native pixel images reuse a pixmap and keep touch claims with controller g
     assert.strictEqual(source[at+1],90,'software/upstream recording stays intact');
 });
 
+test('software images preserve fade opacity and skip transformed chrome', () => {
+    const {Canvas}=require('../runtime/canvas'),{Recorder,setImage,play}=require('../runtime/record');
+    setImage(4001,1,1,Buffer.from([255,0,0,255]));
+    const r=new Recorder(3,1),cv=new Canvas(3,1);
+    r.clear('#0000ff').alpha(0).image(4001,0,0,1,1).alpha(.5).image(4001,1,0,1,1);
+    r.alpha(1).xf(1,0,0).image(4001,2,0,1,1).xf();
+    play(r.words(),cv);
+    assert.deepStrictEqual(Array.from(cv.d.slice(0,4)),[0,0,255,255],'alpha zero draws nothing');
+    assert.deepStrictEqual(Array.from(cv.d.slice(4,8)),[128,0,128,255],'half opacity blends over the destination');
+    assert.deepStrictEqual(Array.from(cv.d.slice(8,12)),[0,0,255,255],'XF chrome remains skipped');
+    const old=new Canvas(1,1);
+    old.drawImage(Buffer.from([9,8,7,0]),1,1,0,0,1,1);
+    assert.deepStrictEqual(Array.from(old.d),[9,8,7,255],'default drawImage callers keep opaque copy semantics');
+});
+
+test('software premultiplied images blend over opaque and transparent canvases', () => {
+    const {Canvas}=require('../runtime/canvas'),{Recorder,setImage,play}=require('../runtime/record');
+    setImage(4002,1,1,Buffer.from([64,0,0,128]));
+    for(const [background,expected] of [[[0,0,200,255],[32,0,150,255]],
+                                      [[0,0,0,0],[128,0,0,64]],
+                                      [[0,100,0,128],[51,60,0,160]]]){
+        const r=new Recorder(1,1),cv=new Canvas(1,1);
+        r.clear(background).alpha(.5).image(4002,0,0,1,1);play(r.words(),cv);
+        assert.deepStrictEqual(Array.from(cv.d),expected);
+    }
+    const straight=new Canvas(1,1);
+    straight.drawImage(Buffer.from([255,0,0,128]),1,1,0,0,1,1,{alpha:.5});
+    assert.deepStrictEqual(Array.from(straight.d),[255,0,0,64],'straight RGBA can opt into source-over');
+    const edge=new Canvas(1,1);
+    edge.drawImage(Buffer.from([255,0,0,255,0,0,255,0]),2,1,0,0,1,1,{linear:true});
+    assert.deepStrictEqual(Array.from(edge.d),[255,0,0,128],'filtering premultiplies each source texel before interpolation');
+});
+
+test('software filtered paper clips wrapped borders without seams, including scaled canvases', () => {
+    const {Canvas,ScaledCanvas}=require('../runtime/canvas'),{Recorder,setImage,play}=require('../runtime/record');
+    // Two content texels (red, blue), with their opposite edge wrapped on both sides.
+    const row=Buffer.from([0,0,255,255,255,0,0,255,0,0,255,255,255,0,0,255]);
+    setImage(4003,4,3,Buffer.concat([row,row,row]),undefined,1);
+    const r=new Recorder(4,1);
+    r.clear('#fff').alpha(.5).clip(0,0,2,1).image(4003,-1.5,-1,4,3);
+    r.clip(2,0,2,1).image(4003,.5,-1,4,3).noclip();
+    const cv=new Canvas(4,1);play(r.words(),cv);
+    for(let x=0;x<4;x++)assert.deepStrictEqual(Array.from(cv.d.slice(x*4,x*4+4)),[191,128,191,255]);
+    const clipped=new Recorder(4,1),scaled=new ScaledCanvas(4,1,2);
+    clipped.clear('#fff').clip(1,0,1,1).image(4003,0,0,4,1);play(clipped.words(),scaled);
+    for(let y=0;y<2;y++)for(let x=0;x<8;x++)if(x<2||x>=4)
+        assert.deepStrictEqual(Array.from(scaled.canvas.d.slice((y*8+x)*4,(y*8+x)*4+4)),[255,255,255,255],
+            'scaled image clipping retains pixels outside the logical clip');
+});
+
+test('native pixel image filters survive caching and recreate textures when changed', () => {
+    const g=new RenderClient('filters',{info(){},warn(){}}),writes=[];
+    g.native=true;g.ready=true;g.info={pixmaps:true};
+    g._write=b=>{writes.push(Buffer.from(b));return true;};
+    const {setImage}=require('../runtime/record'),data=Buffer.alloc(16,255);
+    const first=setImage(97,2,2,data,[],1),version=first.ver;
+    assert.strictEqual(first.filter,1);
+    g._ensureImage(97);
+    assert.deepStrictEqual(writes.map(b=>b.readUInt32LE(0)),[0x4d520003,0x4d520004]);
+    assert.strictEqual(writes[0].readUInt32LE(24),1,'public pixmap requests linear filtering');
+    writes.length=0;
+    assert.strictEqual(setImage(97,2,2,data,[],1).ver,version);
+    g._ensureImage(97);assert.strictEqual(writes.length,0,'unchanged filtered image stays cached');
+    const changed=setImage(97,2,2,data,[],0);
+    assert(changed.ver>version,'changing only the filter changes the image version');
+    g._ensureImage(97);
+    assert.deepStrictEqual(writes.map(b=>b.readUInt32LE(0)),[0x4d520003,0x4d520004],
+        'a changed filter recreates the pixmap and sends complete pixels');
+    assert.strictEqual(writes[0].readUInt32LE(24),0);
+    assert.strictEqual(g.sent.image.get(97).filter,0);
+    assert.throws(()=>setImage(97,2,2,data,[],2),/filter/i);
+    writes.length=0;setImage(98,2,2,data);g._ensureImage(98);
+    assert.strictEqual(writes[0].readUInt32LE(24),0,'existing callers retain nearest filtering');
+});
+
 test('native image regions preserve coordinates, dense pixels and transport ownership', () => {
     const g=new RenderClient('regions',{info(){},warn(){}}),writes=[];
     g.native=true;g.ready=true;g.info={pixmaps:true};

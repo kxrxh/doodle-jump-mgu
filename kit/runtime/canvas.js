@@ -63,7 +63,8 @@ class Canvas {
     }
 
     /** Draw an opaque RGBA image (sw x sh bytes) scaled into x, y, w, h, nearest pixel. */
-    drawImage(src, sw, sh, x, y, w, h) {
+    drawImage(src, sw, sh, x, y, w, h, options) {
+        if (options) return this._drawImage(src, sw, sh, x, y, w, h, options);
         const x0 = Math.max(0, Math.round(x)), y0 = Math.max(0, Math.round(y));
         const x1 = Math.min(this.w, Math.round(x + w)), y1 = Math.min(this.h, Math.round(y + h));
         if (x1 <= x0 || y1 <= y0) return this;
@@ -75,6 +76,49 @@ class Canvas {
                 const si = (sy + Math.min(sw - 1, ((px - x + 0.5) * fx) | 0)) * 4;
                 d[di] = src[si]; d[di + 1] = src[si + 1]; d[di + 2] = src[si + 2]; d[di + 3] = 255;
             }
+        }
+        return this;
+    }
+
+    /** Recorded images use premultiplied pixels, source-over opacity and an optional clip. */
+    _drawImage(src, sw, sh, x, y, w, h, options) {
+        const opacity=Math.max(0,Math.min(1,options.alpha===undefined?1:options.alpha));
+        if (!(opacity>0&&sw>0&&sh>0&&w>0&&h>0)) return this;
+        let x0=Math.max(0,Math.round(x)),y0=Math.max(0,Math.round(y));
+        let x1=Math.min(this.w,Math.round(x+w)),y1=Math.min(this.h,Math.round(y+h));
+        if (options.clip) {
+            const c=options.clip;
+            x0=Math.max(x0,Math.round(c[0]));y0=Math.max(y0,Math.round(c[1]));
+            x1=Math.min(x1,Math.round(c[0]+c[2]));y1=Math.min(y1,Math.round(c[1]+c[3]));
+        }
+        if (x1<=x0||y1<=y0) return this;
+        const d=this.d,fx=sw/w,fy=sh/h;
+        let red,green,blue,alpha;
+        const sample=(i,weight)=>{
+            const a=src[i+3]/255,k=weight*(options.premultiplied?1:a);
+            red+=src[i]*k;green+=src[i+1]*k;blue+=src[i+2]*k;alpha+=a*weight;
+        };
+        for(let py=y0;py<y1;py++)for(let px=x0;px<x1;px++){
+            red=green=blue=alpha=0;
+            if(options.linear){
+                const sx=(px-x+.5)*fx-.5,sy=(py-y+.5)*fy-.5,ix=Math.floor(sx),iy=Math.floor(sy);
+                const tx=sx-ix,ty=sy-iy;
+                const ax=Math.max(0,Math.min(sw-1,ix)),bx=Math.max(0,Math.min(sw-1,ix+1));
+                const ay=Math.max(0,Math.min(sh-1,iy)),by=Math.max(0,Math.min(sh-1,iy+1));
+                sample((ay*sw+ax)*4,(1-tx)*(1-ty));sample((ay*sw+bx)*4,tx*(1-ty));
+                sample((by*sw+ax)*4,(1-tx)*ty);sample((by*sw+bx)*4,tx*ty);
+            }else{
+                const sx=Math.max(0,Math.min(sw-1,Math.floor((px-x+.5)*fx)));
+                const sy=Math.max(0,Math.min(sh-1,Math.floor((py-y+.5)*fy)));
+                sample((sy*sw+sx)*4,1);
+            }
+            const a=alpha*opacity;
+            if (!(a>0)) continue;
+            const i=(py*this.w+px)*4,keep=d[i+3]/255*(1-a),out=a+keep;
+            d[i]=Math.round(Math.min(255,(red*opacity+d[i]*keep)/out));
+            d[i+1]=Math.round(Math.min(255,(green*opacity+d[i+1]*keep)/out));
+            d[i+2]=Math.round(Math.min(255,(blue*opacity+d[i+2]*keep)/out));
+            d[i+3]=Math.round(out*255);
         }
         return this;
     }
@@ -531,7 +575,10 @@ class ScaledCanvas {
     triangle(pts, c) { return this.convex(pts, c); }
     polyline(pts, width, c) { this.canvas.polyline(this._pts(pts), width * this.k, c); return this; }
     fillUnder(pts, baseY, c) { this.canvas.fillUnder(this._pts(pts), baseY * this.k, c); return this; }
-    drawImage(src, sw, sh, x, y, w, h) { const k = this.k; this.canvas.drawImage(src, sw, sh, x * k, y * k, w * k, h * k); return this; }
+    drawImage(src, sw, sh, x, y, w, h, options) {
+        const k=this.k,o=options&&options.clip?Object.assign({},options,{clip:options.clip.map(v=>v*k)}):options;
+        this.canvas.drawImage(src,sw,sh,x*k,y*k,w*k,h*k,o);return this;
+    }
     blit(src, x, y) { return this.drawImage(src.d, src.w, src.h, x, y, src.w, src.h); }
     text(str, x, y, size, c, opts) {
         const k = this.k, o = opts && opts.spacing ? Object.assign({}, opts, { spacing: opts.spacing * k }) : opts;

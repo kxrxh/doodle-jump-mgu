@@ -164,6 +164,16 @@ assert.deepStrictEqual(textures,[[2,1,1,[1,2,3,255]]]);
 tex.writeUInt32LE(1,0);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 tex.writeUInt32LE(2,0);tex.writeUInt32LE(4096,4);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 console.log('Scenery texture boundaries: passed');
+const paper={width:480,height:512,u:.25,v:.75,du:1/544,dv:1/960,alpha:.5};
+engine.packet('EVT1',Buffer.from(JSON.stringify({type:'scenery',paper})));
+assert.deepStrictEqual(engine.scenery.paper,paper);
+for(const invalid of [{du:0},{dv:-1},{width:2047},{height:1.5},{u:-.1},{v:1.1},{alpha:2},{du:null}]) {
+    assert.throws(()=>engine.packet('EVT1',Buffer.from(JSON.stringify({type:'scenery',paper:Object.assign({},paper,invalid)}))),/paper/i);
+    assert.deepStrictEqual(engine.scenery.paper,paper,'Bad projection must preserve the last complete state');
+}
+engine.packet('EVT1',Buffer.from(JSON.stringify({type:'scenery',paper:null})));
+assert.strictEqual(engine.scenery.paper,null);
+console.log('Paper projection boundaries: passed');
 const frames=[];
 engine.onFrame=(pixels,w,h)=>frames.push([pixels.length,w,h,pixels[0],pixels[pixels.length-1]]);
 for(const size of [[544,960],[408,720]]) {
