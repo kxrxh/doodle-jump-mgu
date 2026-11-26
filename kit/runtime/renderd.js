@@ -118,6 +118,11 @@ class RenderClient extends EventEmitter {
         });
         return this;
     }
+    /** Public frame cap. A completed external frame also proves the app is responding to input. */
+    fps(rate) {
+        if (!Number.isInteger(rate) || rate < 0 || rate > 1000) throw new Error('Invalid frame rate');
+        if (this.ready) this._write(this._u32msg(12, [rate]));
+    }
     /**
      * Have the iDrive controller to ourselves (the HMI ignores the knob, press and tilt while it
      * holds; BACK / MENU and the touchscreen still work). Needs mgu-inputgate.so in the HMI.

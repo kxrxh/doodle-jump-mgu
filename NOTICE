@@ -48,14 +48,18 @@ MGU toolkit: https://github.com/cauliflowermossgrape/idrive7-apps
 Revision: cca7f9ad17f96b92e60a89ea98686afe1b662041
 See kit/LICENSE and kit/LICENSE.mgu-renderd.
 
-The separately installed doodle-gpu worker renders game scenes offscreen and
-publishes I420 frames through mgu-render's documented VIDEO interface. It runs
-its own service and socket. Its scene executor originated in the Doodle Jump
-GPU extension to mgu-store revision cc39c1470fd25c4c39605dbe2965139f7d97ce1d:
+The separately installed doodle-gpu worker presents game textures through EGL
+and a Wayland surface attached to the game's existing compositor layer. The
+Wayland IVI protocols are COVESA wayland-ivi-extension 1.11.0 (MIT, DENSO
+CORPORATION and BMW Car IT GmbH); their original notices are retained in the
+protocol XML and LICENSE.ivi. The worker also provides an I420 VIDEO path for
+systems where native surface presentation is unavailable.
+Its scene executor originated in the Doodle Jump GPU extension to mgu-store
+revision cc39c1470fd25c4c39605dbe2965139f7d97ce1d:
 https://github.com/robertnisipeanu/mgu-store
 The worker is GPL-3.0-or-later and retains the original renderer's MIT notice
 as LICENSE.mgu-renderd. Complete sources and the build recipe ship as
-doodle-gpu-source-2.0.1.tar.gz and are in native/doodle-gpu.
+doodle-gpu-source-2.1.0.tar.gz and are in native/doodle-gpu.
 
 Source builds download and verify the original APK and game assets. Ready app
 packages include those verified files; the source repository and runtime-only

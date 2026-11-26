@@ -112,9 +112,12 @@ class GpuPackageTests(unittest.TestCase):
                 self.assertIn('SocketGroup=tm_oap_app', socket_unit)
                 self.assertIn('files/LICENSE', archive.getnames())
                 self.assertIn('files/LICENSE.mgu-renderd', archive.getnames())
+                self.assertIn('files/LICENSE.ivi', archive.getnames())
             with tarfile.open(sources) as archive:
                 names=archive.getnames()
-                for source in ('scene.c', 'scene.h', 'worker.c', 'video.c', 'video.h', 'Makefile', 'LICENSE'):
+                for source in ('scene.c', 'scene.h', 'worker.c', 'video.c', 'video.h', 'present.c', 'present.h',
+                               'protocol/ivi-application.xml', 'protocol/ivi-controller.xml',
+                               'Makefile', 'LICENSE', 'LICENSE.ivi'):
                     self.assertTrue(any(name.endswith('/'+source) for name in names), source)
                 self.assertFalse(any('/build/' in name for name in names))
 

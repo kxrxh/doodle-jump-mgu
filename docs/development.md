@@ -6,7 +6,7 @@ Run commands from the repository root.
 | --- | --- |
 | `apps/kxrxh_doodle_jump/` | MGU app, controls, and engine client |
 | `runtime/` | Python host, C++ backend, and runtime assets |
-| `native/doodle-gpu/` | Store renderer add-on |
+| `native/doodle-gpu/` | Independent GPU presentation worker |
 | `kit/` | MGU toolkit subset and browser emulator |
 | `tools/` | Build scripts and pinned dependencies |
 | `tests/` | App, runtime, and packaging tests |
@@ -66,8 +66,12 @@ To rebuild the GPU worker, use Docker and Python 3.
 python3 tools/build_gpu_renderer.py
 ```
 
-The worker renders offscreen and publishes frames through Store's documented
-VIDEO interface. Its service and socket belong to `doodle-gpu`. The build creates
+The worker presents through a Wayland/EGL surface on the game's existing
+compositor layer. It binds the layer through a temporary placement challenge
+and renderer peer credentials, using public IVI interfaces. Store owns the
+parent layer's visibility and input handling. The worker provides a VIDEO
+fallback when native presentation is unavailable. Its service and socket
+belong to `doodle-gpu`. The build creates
 the worker package and corresponding sources in `dist/`; Store installs it with
 the game. Upgrading an older GPU add-on removes its renderer override. Restart
 when Store asks to complete that migration.
@@ -89,6 +93,7 @@ Retain licenses and corresponding sources. Keep BMW's SDK out of packages.
 ## Troubleshoot performance
 
 Enable **Show FPS** in the app. **Game** measures completed engine frames and
-**Render** measures renderer frames. **GPU** or **CPU** identifies the drawing
-path. In CPU mode, the last line explains why GPU drawing is unavailable.
+**Render** measures renderer frames. **Native** counts compositor frame
+callbacks. **Video** uses the shared video transport, and **CPU** uses software
+rasterization. In CPU mode, the last line explains why GPU drawing is unavailable.
 After a screen interruption, **Last** shows the most recent display event.

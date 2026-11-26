@@ -4,7 +4,7 @@
     {
       "id": "kxrxh_doodle_jump",
       "kind": "app",
-      "version": "0.10.1",
+      "version": "0.11.0",
       "title": "Doodle Jump",
       "description": "Doodle Jump for MGU7",
       "author": "kxrxh",
@@ -14,23 +14,23 @@
       "requires": {
         "mgu-render": "0.6.26",
         "mgu-python": "1.0.3",
-        "doodle-gpu": "2.0.1"
+        "doodle-gpu": "2.1.0"
       },
       "icon": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/catalog/kxrxh_doodle_jump.png",
       "iconSha256": "5eb833c388867f4d29701358f81687f6cf53a7140eb18376bdf491b679c7b581",
       "artifact": {
-        "name": "kxrxh_doodle_jump@0.10.1.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.10.1/kxrxh_doodle_jump@0.10.1.tgz",
-        "size": 24939664,
-        "sha256": "1e778fba9a1394f673a6b1d30ecab724ecb14a70882546ffbcfd6b3cc772cc98"
+        "name": "kxrxh_doodle_jump@0.11.0.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.11.0/kxrxh_doodle_jump@0.11.0.tgz",
+        "size": 24942211,
+        "sha256": "bd9298f7ebb5fb8f975ab9e9b36df714933cd95c3b4dae9e23b404b7feaa68c5"
       }
     },
     {
       "id": "doodle-gpu",
       "kind": "tool",
-      "version": "2.0.1",
+      "version": "2.1.0",
       "title": "Doodle Jump GPU support",
-      "description": "Renders Doodle Jump through the Store video interface",
+      "description": "Draws Doodle Jump into compositor GPU buffers",
       "mguHmi": [
         "ID7"
       ],
@@ -41,10 +41,10 @@
       "uninstallable": true,
       "author": "kxrxh",
       "artifact": {
-        "name": "doodle-gpu@2.0.1.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.10.1/doodle-gpu@2.0.1.tgz",
-        "size": 31166,
-        "sha256": "9d66eedf41c7bc4919fcca315093871a985ef936b6c6f70b1a72e93ff570945e"
+        "name": "doodle-gpu@2.1.0.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.11.0/doodle-gpu@2.1.0.tgz",
+        "size": 42886,
+        "sha256": "f6afc0bc7863607acf77af5a0bd5838257d4d0b65ab52cfe467dcfa90c8a97e1"
       }
     }
   ]

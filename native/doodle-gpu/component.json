@@ -1,9 +1,9 @@
 {
   "id": "doodle-gpu",
   "kind": "tool",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "title": "Doodle Jump GPU support",
-  "description": "Renders Doodle Jump through the Store video interface",
+  "description": "Draws Doodle Jump into compositor GPU buffers",
   "mguHmi": [
     "ID7"
   ],
@@ -28,6 +28,10 @@
     },
     {
       "path": "gpu_check.js",
+      "mode": "0644"
+    },
+    {
+      "path": "LICENSE.ivi",
       "mode": "0644"
     }
   ],

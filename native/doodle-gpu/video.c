@@ -186,6 +186,7 @@ int video_publish(struct video *v, unsigned texture) {
     return 0;
 }
 const char *video_path(const struct video *v) { return v->path; }
+void video_resume_sequence(struct video *v, uint32_t sequence) { v->header[4] = sequence; }
 uint32_t video_sequence(const struct video *v) { return v->header[4]; }
 void video_free(struct video **state) {
     struct video *v = *state;

@@ -22,7 +22,7 @@ To update, refresh the repository in Store and install the latest release.
 
 Touch controls work without extra tools. iDrive controller support depends on your setup.
 
-Enable **Show FPS** in the main menu to check performance.
+Enable **Show FPS** in the main menu to check performance. **Native** counts frames presented by the compositor.
 
 ![Gameplay](docs/screenshots/gameplay.png)
 

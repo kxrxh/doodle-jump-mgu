@@ -238,7 +238,7 @@ console.log('Public video transport and renderer reconnect: passed');
     const fpsLabel = () => labels.filter(label => label.includes(' FPS')).pop();
     assert.strictEqual(fpsLabel(), undefined, 'FPS display is hidden when disabled');
     showFps = true; draw();
-    assert.strictEqual(fpsLabel(), 'GPU | Game -- | Render -- FPS');
+    assert.strictEqual(fpsLabel(), 'Video | Game -- | Render -- FPS');
     ctx.display.lastInterruption = 'Renderer disconnected';
     draw();
     assert(labels.includes('Last | Renderer disconnected'), 'Show FPS retains the last display interruption after recovery');
@@ -247,9 +247,9 @@ console.log('Public video transport and renderer reconnect: passed');
         if (i === 49) gpu.stats = { fps:30, at:now };
         draw();
     }
-    assert.strictEqual(fpsLabel(), 'GPU | Game 50 | Render 30 FPS', 'counts completed game frames separately from Store render stats');
+    assert.strictEqual(fpsLabel(), 'Video | Game 50 | Render 30 FPS', 'counts completed game frames separately from Store render stats');
     advance(3000); draw();
-    assert.strictEqual(fpsLabel(), 'GPU | Game 0 | Render -- FPS', 'stale renderer samples expire');
+    assert.strictEqual(fpsLabel(), 'Video | Game 0 | Render -- FPS', 'stale renderer samples expire');
     showFps = false; labels.length = 0; draw();
     assert.strictEqual(fpsLabel(), undefined);
     game.playing = true; showFps = true; draw();
@@ -318,3 +318,139 @@ console.log('Public video transport and renderer reconnect: passed');
     events.exit();
 }
 console.log('GPU selection, reconnect while paused and software fallback: passed');
+
+{
+    const fs=require('fs'),path=require('path'),vm=require('vm'),EventEmitter=require('events');
+    const {Controls}=require('../../apps/kxrxh_doodle_jump/controls');
+    let now=1000,seq=0,draw,focus,layout,game,painting,visible=false;
+    const timers=new Map(),requests=[],labels=[],bindings=[],views=[],placements=[],cursorPositions=[],heartbeats=[];
+    let answer;
+    function later(fn,delay){const id=++seq;timers.set(id,{fn,at:now+Math.max(1,delay)});return id;}
+    function advance(ms){
+        const end=now+ms;
+        for(;;){
+            let next=null;
+            timers.forEach((timer,id)=>{if(timer.at<=end&&(next===null||timer.at<timers.get(next).at))next=id;});
+            if(next===null)break;
+            const timer=timers.get(next);timers.delete(next);now=timer.at;timer.fn();
+        }
+        now=end;
+    }
+    const gpu=new EventEmitter();
+    Object.assign(gpu,{ready:true,native:true,video:true,generation:1,onScreen:true,visible:false,sock:{},path:'/run/mgu-render/render.sock'});
+    gpu.fps=value=>heartbeats.push(value);
+    gpu.show=value=>{gpu.visible=value;};
+    gpu.place=value=>{placements.push(Object.assign({},value));gpu.placement=Object.assign({},value);};
+    const worker={ready:true,native:false,binding:false,generation:1,
+        challenge(w,h){return [-9000,-10000,w,h];},
+        bind(endpoint,marker,complete){this.binding=true;bindings.push({endpoint,marker});answer=ok=>{this.native=ok;this.binding=false;complete(null,{event:'bind',native:ok});};return true;},
+        view(rectangle,on){views.push({rectangle:rectangle.slice(),on});},
+        cursor(){cursorPositions.push(Array.from(arguments));},
+    };
+    class StubEngine{
+        constructor(){game=this;this.ready=false;this.busy=false;this.playing=false;this.worker=worker;this.scenery={sprites:{cursor:{id:20,width:1,height:1,hotspotX:1,hotspotY:2}}};}
+        start(){}send(){}stop(){}
+        frame(command){assert(!this.busy);this.busy=true;requests.push(command);return true;}
+        complete(presented=true){this.busy=false;this.onVideo({mode:'native',width:408,height:720,sequence:1,presented,timestamp:1});}
+    }
+    const events={};
+    const ctx={
+        dataDir:'',log:{info(){},warn(){}},settings:{get(key){return key==='showFps';}},
+        ui:{isVisible(){return visible;},hasFocus(){return visible;},text(){},image(id,value){painting=value;},open(){},onClick(){},onFocus(fn){focus=fn;}},
+        display:{gpu,place:{x:0,y:0,w:1920,h:720,full:true,scale:1,ox:0,oy:0},active(){return visible;},own(){return false;}},
+        controller:{grab(){},onInput(){}},signals:{watch(){}},hideButton(){},onLayout(fn){layout=fn;},
+        loop(name,fps,fn){draw=fn;return{kick(){}};},
+        canvas(w,h){const cv=new record.Recorder(w,h);cv.place=Object.assign({},ctx.display.place);return cv;},
+    };
+    const dependencies={
+        './kit/mgu':{run(spec){spec.start(ctx);}},'./kit/record':record,
+        './kit/parked':{watch(){return{moving(){return false;}};}},'./engine':{Engine:StubEngine},
+        './kit/sheet':{cardSheet(){}},'./world':{World:class{draw(){}}},'./controls':{Controls},
+    };
+    const originalText=record.Recorder.prototype.text;
+    record.Recorder.prototype.text=function(label){labels.push(label);return originalText.apply(this,arguments);};
+    try{
+        vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../apps/kxrxh_doodle_jump/main.js'),'utf8'),{
+            require(name){return dependencies[name];},Date:{now(){return now;}},setTimeout:later,clearTimeout(id){timers.delete(id);},
+            setInterval(){return ++seq;},clearInterval(){},process:{on(name,fn){events[name]=fn;},exit(){}},
+        });
+        draw();advance(20);
+        assert.strictEqual(bindings.length,0,'a hidden game page never starts a placement challenge');
+        visible=true;focus();later(()=>gpu.show(true),350);draw();advance(20);
+        assert.strictEqual(bindings.length,0,'binding waits for the pending Store show delay');
+        advance(330);game.ready=true;draw();advance(20);
+        assert.strictEqual(bindings.length,1);
+        assert.strictEqual(requests.length,0,'frame capture waits for the native placement transaction');
+        assert.deepStrictEqual(bindings[0].marker,[-9000,-10000,1920,720]);
+        assert.strictEqual(gpu.visible,false,'the challenged surface stays hidden');
+        assert.strictEqual(placements[0].w,1920,'a challenge preserves surface dimensions');
+        assert.strictEqual(placements[0].x,-9000);
+        gpu.onScreen=false;
+        answer(true);
+        assert.strictEqual(gpu.placement.x,0,'successful binding restores the actual placement');
+        assert.strictEqual(gpu.visible,true);
+        assert.strictEqual(views[views.length-1].on,false,'unknown or hidden Store state keeps the native surface hidden');
+        gpu.onScreen=true;gpu.emit('state',{onScreen:true,front:true});
+        assert.strictEqual(views[views.length-1].on,true);
+        advance(17);assert.strictEqual(requests[0].gpu,true);
+        game.complete();draw();
+        assert.strictEqual(painting.videos.has(1),false,'native presentation sends no VIDEO frame');
+        assert.strictEqual(painting.images.has(1),false,'native presentation sends no CPU game image');
+        assert(labels.includes('Native | Presented -- FPS'));
+        assert.deepStrictEqual(heartbeats,[60],'actual native presentation signals progress to the Store input watchdog');
+        assert.strictEqual(cursorPositions[cursorPositions.length-1][4],true,'menu cursor is drawn by the native worker above the game surface');
+        for(let i=0;i<4;i++)draw();
+        assert.strictEqual(bindings.length,1,'normal frames do not repeat the placement challenge');
+        advance(1001);game.complete(false);draw();
+        assert(labels.includes('Native | Presented 0 FPS'),'hidden acknowledgements do not count as presented game frames');
+        assert.deepStrictEqual(heartbeats,[60],'hidden acknowledgements do not reset the input watchdog');
+        visible=false;focus();
+        assert.strictEqual(views[views.length-1].on,false,'focus loss hides native presentation synchronously');
+        visible=true;focus();draw();
+        assert.strictEqual(bindings.length,1,'focus recovery keeps the existing parent layer binding');
+        ctx.display.sheet={};draw();assert.strictEqual(views[views.length-1].on,false,'a settings sheet hides the native game surface');
+        ctx.display.sheet=null;draw();assert.strictEqual(views[views.length-1].on,true);
+        gpu.onScreen=false;gpu.emit('state',{onScreen:false,front:true});
+        assert.strictEqual(views[views.length-1].on,false,'camera and covered-layer state hides native presentation');
+        gpu.onScreen=true;gpu.emit('state',{onScreen:true,front:true});
+        assert.strictEqual(views[views.length-1].on,true);
+        gpu.ready=false;gpu.emit('close');assert.strictEqual(views[views.length-1].on,false,'renderer disconnection hides native presentation');
+        game.complete(false);gpu.ready=true;gpu.generation++;draw();
+        assert.strictEqual(bindings.length,2,'a new renderer session obtains a new native parent');
+        answer(false);draw();
+        assert.strictEqual(gpu.placement.x,0,'failed binding also restores the placement');
+        assert.strictEqual(gpu.visible,true);
+        advance(17);game.busy=false;game.onVideo({mode:'video',path:'/dev/shm/mgu-video-doodle-fallback',width:408,height:720,sequence:1});draw();
+        assert(painting.videos.has(1),'unsupported native presentation uses the public VIDEO path');
+        for(let i=0;i<4;i++)draw();assert.strictEqual(bindings.length,2,'unsupported binding does not repeatedly blink the page');
+        game.complete(false);ctx.display.place=Object.assign({},ctx.display.place,{w:1600,h:600});layout();gpu.generation++;draw();
+        assert.strictEqual(bindings.length,3,'a new layout rebinds with its actual dimensions');
+        assert.deepStrictEqual(bindings[2].marker,[-9000,-10000,1600,600]);
+        const staleAnswer=answer;
+        ctx.display.place=Object.assign({},ctx.display.place,{x:10,w:1700});gpu.generation++;
+        staleAnswer(true);
+        assert.strictEqual(bindings.length,4,'a renderer change during binding starts a fresh transaction');
+        assert.strictEqual(placements[placements.length-1].w,1700,'a stale acknowledgement cannot restore an obsolete layout');
+        answer(true);assert.strictEqual(gpu.placement.x,10);
+        assert.strictEqual(gpu.placement.w,1700);
+        assert.strictEqual(gpu.visible,true,'resizing during binding restores the current visible layout');
+        game.busy=false;gpu.generation++;draw();
+        assert.strictEqual(bindings.length,5);
+        gpu.sock={};gpu.generation++;gpu.visible=false;gpu.place(ctx.display.place);
+        answer(true);
+        assert.strictEqual(gpu.visible,false,'a stale binding cannot show a replacement renderer connection');
+        assert.strictEqual(bindings.length,5,'the replacement connection waits for its own show delay');
+        gpu.show(true);draw();
+        assert.strictEqual(bindings.length,6);
+        visible=false;focus();answer(true);
+        assert.strictEqual(gpu.visible,false,'focus loss during binding keeps the page hidden');
+        assert.strictEqual(views[views.length-1].on,false);
+        visible=true;focus();gpu.show(true);game.busy=false;gpu.generation++;draw();
+        assert.strictEqual(bindings.length,7);
+        game.onError(new Error('test engine failure'));answer(false);
+        assert.strictEqual(gpu.visible,true,'a paused engine keeps the current error page visible');
+        assert.strictEqual(views[views.length-1].on,false,'the stopped native game stays hidden');
+        events.exit();
+    }finally{record.Recorder.prototype.text=originalText;}
+}
+console.log('Native presentation placement, visibility, cursor and recovery: passed');

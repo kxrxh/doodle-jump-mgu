@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <math.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,6 +20,7 @@
 #include <unistd.h>
 #include "scene.h"
 #include "video.h"
+#include "present.h"
 
 #ifndef EGL_PLATFORM_SURFACELESS_MESA
 #define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
@@ -29,6 +31,10 @@
 #define TEXTURE_MESSAGE 0x4d520007u
 #define SCENE_MESSAGE 0x4d520008u
 #define END_MESSAGE 0x444a0001u
+#define BIND_MESSAGE 0x444a0002u
+#define VIEW_MESSAGE 0x444a0003u
+#define CURSOR_IMAGE_MESSAGE 0x444a0004u
+#define CURSOR_POSITION_MESSAGE 0x444a0005u
 #define MAX_MESSAGE (24u << 20)
 #define OUTPUT_WIDTH 408
 #define OUTPUT_HEIGHT 720
@@ -38,6 +44,7 @@ struct context {
     EGLDisplay display;
     EGLContext context;
     EGLSurface surface;
+    EGLConfig config;
     struct wl_display *wayland;
 };
 struct client {
@@ -51,6 +58,11 @@ struct client {
     struct video *video;
     GLuint rendered;
     int frame_pending;
+    struct context *context;
+    struct present *presenter;
+    int native, used_native;
+    int view[5];
+    uint32_t sequence;
 };
 static volatile sig_atomic_t stopping;
 static void stop(int signal_number) { (void)signal_number; stopping = 1; }
@@ -69,31 +81,26 @@ static void context_close(struct context *c) {
     if (c->wayland) wl_display_disconnect(c->wayland);
     memset(c, 0, sizeof *c);
 }
-static int context_display(struct context *c, EGLDisplay display) {
+static int context_display(struct context *c, EGLDisplay display, int window) {
     if (display == EGL_NO_DISPLAY || !eglInitialize(display, NULL, NULL)) return -1;
     c->display = display;
     if (!eglBindAPI(EGL_OPENGL_ES_API)) return -1;
-    const EGLint base[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+    EGLint attributes[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_NONE };
-    EGLConfig config;
-    EGLint count = 0;
-    int pbuffer = eglChooseConfig(display, base, &config, 1, &count) && count;
-    if (!pbuffer) {
+        EGL_SURFACE_TYPE, window ? EGL_WINDOW_BIT : EGL_PBUFFER_BIT, EGL_NONE };
+    EGLint count = 0, surface_type = 0;
+    if (!eglChooseConfig(display, attributes, &c->config, 1, &count) || !count) return -1;
+    const EGLint context_attributes[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+    c->context = eglCreateContext(display, c->config, EGL_NO_CONTEXT, context_attributes);
+    if (c->context == EGL_NO_CONTEXT) return -1;
+    eglGetConfigAttrib(display, c->config, EGL_SURFACE_TYPE, &surface_type);
+    if (surface_type & EGL_PBUFFER_BIT) {
+        const EGLint dimensions[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+        c->surface = eglCreatePbufferSurface(display, c->config, dimensions);
+        if (c->surface == EGL_NO_SURFACE) return -1;
+    } else {
         const char *extensions = eglQueryString(display, EGL_EXTENSIONS);
         if (!extensions || !strstr(extensions, "EGL_KHR_surfaceless_context")) return -1;
-        const EGLint attributes[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-            EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-            EGL_SURFACE_TYPE, 0, EGL_NONE };
-        if (!eglChooseConfig(display, attributes, &config, 1, &count) || !count) return -1;
-    }
-    const EGLint attributes[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
-    c->context = eglCreateContext(display, config, EGL_NO_CONTEXT, attributes);
-    if (c->context == EGL_NO_CONTEXT) return -1;
-    if (pbuffer) {
-        const EGLint dimensions[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
-        c->surface = eglCreatePbufferSurface(display, config, dimensions);
-        if (c->surface == EGL_NO_SURFACE) return -1;
     }
     return eglMakeCurrent(display, c->surface, c->surface, c->context) ? 0 : -1;
 }
@@ -101,28 +108,111 @@ static int context_open(struct context *c) {
     memset(c, 0, sizeof *c);
     PFNEGLGETPLATFORMDISPLAYEXTPROC platform =
         (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
-    if (platform) {
-        if (!context_display(c, platform(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL))) return 0;
+    // Window-compatible contexts let the compositor own the presentation buffers.
+    if (getenv("XDG_RUNTIME_DIR") || getenv("WAYLAND_DISPLAY")) c->wayland = wl_display_connect(NULL);
+    if (c->wayland) {
+        if (!platform) setenv("EGL_PLATFORM", "wayland", 1);
+        EGLDisplay display = platform ? platform(EGL_PLATFORM_WAYLAND_EXT, c->wayland, NULL) :
+                                       eglGetDisplay((EGLNativeDisplayType)c->wayland);
+        if (!context_display(c, display, 1)) return 0;
         context_close(c);
     }
-    c->wayland = wl_display_connect(NULL);
-    if (!c->wayland) return -1;
-    if (!platform) setenv("EGL_PLATFORM", "wayland", 1);
-    EGLDisplay display = platform ? platform(EGL_PLATFORM_WAYLAND_EXT, c->wayland, NULL) :
-                                   eglGetDisplay((EGLNativeDisplayType)c->wayland);
-    if (!context_display(c, display)) return 0;
+    if (platform && !context_display(c, platform(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL), 0)) return 0;
     context_close(c);
     return -1;
 }
 static void client_close(struct client *c) {
     if (c->fd >= 0) close(c->fd);
+    c->fd = -1;
+    present_free(&c->presenter);
     scene_free(&c->scene);
     video_free(&c->video);
     free(c->payload);
+    struct context *context = c->context;
     memset(c, 0, sizeof *c);
+    c->context = context;
     c->fd = -1;
 }
+static uint32_t next_sequence(uint32_t sequence) { return sequence == UINT32_MAX ? 1 : sequence + 1; }
+static int reply(struct client *c, const char *response, int length) {
+    return length > 0 && send(c->fd, response, (size_t)length, MSG_NOSIGNAL) == length ? 0 : -1;
+}
+static void presented(void *data, uint32_t timestamp, int visible) {
+    struct client *c = data;
+    if (!c->frame_pending || c->fd < 0) return;
+    c->sequence = next_sequence(c->sequence);
+    char response[224];
+    int length = snprintf(response, sizeof response,
+        "{\"mode\":\"native\",\"width\":%d,\"height\":%d,\"sequence\":%u,\"presented\":%s,\"timestamp\":%u}\n",
+        c->view[2], c->view[3], c->sequence, visible ? "true" : "false", timestamp);
+    c->frame_pending = 0;
+    if (reply(c, response, length) < 0) shutdown(c->fd, SHUT_RDWR);
+}
+static int bind_presenter(struct client *c) {
+    if (c->frame_pending || c->length < 18 || c->length > 125 || c->payload[c->length - 1] ||
+        memchr(c->payload + 16, 0, c->length - 17)) return -1;
+    int rectangle[4];
+    memcpy(rectangle, c->payload, sizeof rectangle);
+    if (rectangle[2] < 16 || rectangle[3] < 16 || rectangle[2] > 4096 || rectangle[3] > 4096) return -1;
+    present_free(&c->presenter);
+    c->native = 0;
+    if (c->context->wayland) {
+        c->presenter = present_create(c->context->wayland, c->context->display,
+            c->context->context, c->context->config, c->context->surface);
+        if (c->presenter && !present_bind(c->presenter, (char *)c->payload + 16, rectangle)) {
+            c->native = c->used_native = 1;
+            c->view[0] = c->view[1] = c->view[4] = 0;
+            c->view[2] = OUTPUT_WIDTH; c->view[3] = OUTPUT_HEIGHT;
+            video_free(&c->video);
+        } else present_free(&c->presenter);
+    }
+    const char *response = c->native ? "{\"event\":\"bind\",\"native\":true}\n" : "{\"event\":\"bind\",\"native\":false}\n";
+    return reply(c, response, (int)strlen(response));
+}
+static int configure_view(struct client *c) {
+    if (c->length != sizeof c->view) return -1;
+    int view[5]; memcpy(view, c->payload, sizeof view);
+    if (view[0] < 0 || view[1] < 0 || view[2] < 16 || view[3] < 16 ||
+        view[0] + (int64_t)view[2] > 4096 || view[1] + (int64_t)view[3] > 4096 || (view[4] != 0 && view[4] != 1)) return -1;
+    memcpy(c->view, view, sizeof view);
+    return c->native ? present_configure(c->presenter, view[0], view[1], view[2], view[3], view[4]) : 0;
+}
+static int cursor_image(struct client *c) {
+    if (c->length < 8) return -1;
+    uint32_t width, height; memcpy(&width, c->payload, 4); memcpy(&height, c->payload + 4, 4);
+    if (!width || !height || width > 512 || height > 512 || 8 + (uint64_t)width * height * 4 != c->length) return -1;
+    return c->native ? present_cursor_image(c->presenter, width, height, c->payload + 8) : 0;
+}
+static int cursor_position(struct client *c) {
+    if (c->length != 20) return -1;
+    float point[4]; uint32_t visible;
+    memcpy(point, c->payload, sizeof point); memcpy(&visible, c->payload + 16, 4);
+    for (int i = 0; i < 4; i++) if (!isfinite(point[i]) || point[i] < 0 || point[i] > 1024) return -1;
+    if (visible > 1) return -1;
+    if (c->native) present_cursor_position(c->presenter, point[0], point[1], (int)visible, point[2], point[3]);
+    return 0;
+}
+static int publish_video(struct client *c) {
+    if (!c->video) c->video = video_create(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+    if (c->video && c->used_native) video_resume_sequence(c->video, c->sequence);
+    if (!c->video || video_publish(c->video, c->rendered) < 0) {
+        fprintf(stderr, "%s\n", video_error()); return -1;
+    }
+    char response[192];
+    int length = snprintf(response, sizeof response,
+        "{\"path\":\"%s\",\"width\":%u,\"height\":%u,\"sequence\":%u}\n",
+        video_path(c->video), OUTPUT_WIDTH, OUTPUT_HEIGHT, video_sequence(c->video));
+    if (length < 0 || (size_t)length >= sizeof response ||
+        send(c->fd, response, (size_t)length, MSG_NOSIGNAL) != length) return -1;
+    c->sequence = video_sequence(c->video);
+    c->frame_pending = 0;
+    return 0;
+}
 static int process_message(struct client *c) {
+    if (c->kind == BIND_MESSAGE) return bind_presenter(c);
+    if (c->kind == VIEW_MESSAGE) return configure_view(c);
+    if (c->kind == CURSOR_IMAGE_MESSAGE) return cursor_image(c);
+    if (c->kind == CURSOR_POSITION_MESSAGE) return cursor_position(c);
     if (c->kind == TEXTURE_MESSAGE) {
         if (scene_texture(&c->scene, c->payload, c->length) < 0) {
             fprintf(stderr, "%s\n", scene_error()); return -1;
@@ -136,17 +226,11 @@ static int process_message(struct client *c) {
         if (!c->rendered) { fprintf(stderr, "%s\n", scene_error()); return -1; }
         c->frame_pending = 1;
     } else if (c->kind == END_MESSAGE && !c->length && c->frame_pending) {
-        if (!c->video) c->video = video_create(OUTPUT_WIDTH, OUTPUT_HEIGHT);
-        if (!c->video || video_publish(c->video, c->rendered) < 0) {
-            fprintf(stderr, "%s\n", video_error()); return -1;
+        if (c->native) {
+            if (!present_valid(c->presenter) || present_draw(c->presenter, c->rendered, presented, c) < 0) return -1;
+        } else {
+            if (publish_video(c) < 0) return -1;
         }
-        char response[192];
-        int length = snprintf(response, sizeof response,
-            "{\"path\":\"%s\",\"width\":%u,\"height\":%u,\"sequence\":%u}\n",
-            video_path(c->video), OUTPUT_WIDTH, OUTPUT_HEIGHT, video_sequence(c->video));
-        if (length < 0 || (size_t)length >= sizeof response ||
-            send(c->fd, response, (size_t)length, MSG_NOSIGNAL) != length) return -1;
-        c->frame_pending = 0;
         // Theme uploads can be much larger than the following draw lists.
         if (c->capacity > (1u << 20)) {
             free(c->payload);
@@ -157,6 +241,10 @@ static int process_message(struct client *c) {
         fprintf(stderr, "invalid GPU message or batch\n"); return -1;
     }
     return 0;
+}
+static int supported_message(uint32_t kind) {
+    return kind == TEXTURE_MESSAGE || kind == SCENE_MESSAGE ||
+           (kind >= END_MESSAGE && kind <= CURSOR_POSITION_MESSAGE);
 }
 static int client_read(struct client *c) {
     size_t consumed = 0;
@@ -182,7 +270,7 @@ static int client_read(struct client *c) {
             if (c->header_bytes != sizeof c->header) continue;
             memcpy(&c->kind, c->header, 4);
             memcpy(&c->length, c->header + 4, 4);
-            if (c->length > MAX_MESSAGE || (c->kind != TEXTURE_MESSAGE && c->kind != SCENE_MESSAGE && c->kind != END_MESSAGE)) return -1;
+            if (c->length > MAX_MESSAGE || !supported_message(c->kind)) return -1;
             if (c->length > c->capacity) {
                 uint8_t *payload = realloc(c->payload, c->length);
                 if (!payload) return -1;
@@ -246,11 +334,13 @@ int main(int argc, char **argv) {
         if (socket_path) unlink(socket_path);
         return 1;
     }
-    struct client client = { .fd = -1 };
+    struct client client = { .fd = -1, .context = &context };
     int result = 0;
     while (!stopping) {
-        struct pollfd descriptors[] = { { listener, POLLIN, 0 }, { client.fd, POLLIN, 0 } };
-        int ready = poll(descriptors, 2, 1000);
+        if (client.presenter && present_dispatch(client.presenter) < 0) { result = 1; break; }
+        struct pollfd descriptors[] = { { listener, POLLIN, 0 }, { client.fd, POLLIN, 0 },
+            { client.presenter ? present_fd(client.presenter) : -1, POLLIN, 0 } };
+        int ready = poll(descriptors, 3, 1000);
         if (ready < 0 && errno != EINTR) { result = 1; break; }
         if (ready < 0) continue;
         if (descriptors[0].revents & POLLIN) {
@@ -264,6 +354,7 @@ int main(int argc, char **argv) {
         if (client.fd >= 0 && descriptors[1].fd == client.fd &&
             ((descriptors[1].revents & (POLLERR | POLLHUP | POLLNVAL)) ||
              ((descriptors[1].revents & POLLIN) && client_read(&client) < 0))) client_close(&client);
+        if (client.presenter && (descriptors[2].revents & (POLLIN | POLLERR | POLLHUP)) && present_dispatch(client.presenter) < 0) { result = 1; break; }
         if (client.fd >= 0 && client.partial_since && milliseconds() - client.partial_since > PARTIAL_TIMEOUT_MS) client_close(&client);
     }
     client_close(&client);

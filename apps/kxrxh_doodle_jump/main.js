@@ -22,6 +22,7 @@ mgu.run({
         let gpuEnabled = false, gpuSource = null, gpuGeneration = 0, workerGeneration = 0, gpuReset = false, submitted = null, frameMode = null;
         let fpsSample = null, gameLoop = null;
         let lastFrameGPU = false, capturedWorkerGeneration = 0;
+        let nativeAttempt = null, nativeBinding = null;
         let paintedFrame = -1, paintedSteering = 0, paintedFps = false;
         const controls = new Controls(() => engine.playing);
         const world = new World();
@@ -30,7 +31,17 @@ mgu.run({
             queueFrame();
         };
         engine.onVideo = (frame) => {
-            if (acceptFrame(true)) { setVideo(IMAGE, frame.path); frameMode = 'gpu'; frameReady(); }
+            if (acceptFrame(true)) {
+                if (frame.mode === 'native') {
+                    frameMode = 'native';
+                    if (frame.presented) {
+                        const gpu = ctx.display && ctx.display.gpu;
+                        // The public FPS message records real progress for Store's input watchdog.
+                        if (gpu && gpu.fps) gpu.fps(60);
+                        frameReady();
+                    }
+                } else { setVideo(IMAGE, frame.path); frameMode = 'gpu'; frameReady(); }
+            }
             queueFrame();
         };
         engine.onGPUError = () => { updateGPU(); queueFrame(); };
@@ -71,23 +82,80 @@ mgu.run({
                 if (go) queueFrame(); else cancelFrame();
                 if (!go && shown() && driving()) { log.info('car moving: original game paused'); ui.open('MAIN'); }
             }
+            syncNative();
             menu();
         }
         function cancelFrame() {
             if (frameTimer !== null) { clearTimeout(frameTimer); frameTimer = null; }
         }
+        function nativeSurface() {
+            const display = ctx.display, gpu = display && display.gpu, place = display && display.place, worker = engine.worker;
+            if (!gpu || !gpu.ready || !gpu.native || !worker || !worker.ready || !place ||
+                !(place.w > 0 && place.h > 0) || !Number.isInteger(place.x) || !Number.isInteger(place.y)) return null;
+            return { gpu, worker, place, key:[gpu.generation,worker.generation,place.x,place.y,place.w,place.h].join('/') };
+        }
+        function boundNative(state) {
+            return !!(state && nativeAttempt && nativeAttempt.source === state.gpu && nativeAttempt.key === state.key && state.worker.native);
+        }
+        function syncNative() {
+            const worker = engine.worker;
+            if (!worker || !worker.view) return;
+            const state = nativeSurface(), place = state && state.place;
+            const height = place ? place.h : H, width = height*544/960;
+            const rectangle = [place ? (place.w-width)/2 : 0,0,width,height];
+            const display = ctx.display;
+            worker.view(rectangle, !!(boundNative(state) && !nativeBinding && going && !display.sheet &&
+                state.gpu.onScreen === true && display.active('GAME')));
+            const cursor = engine.scenery.sprites.cursor;
+            if (worker.cursor && cursor) worker.cursor(controls.cursor.x,controls.cursor.y,cursor.hotspotX,cursor.hotspotY,
+                !!(boundNative(state) && !engine.playing && frames && !error));
+        }
+        function bindNative(state) {
+            if (!state || !going || !ctx.display.active('GAME') || state.gpu.visible !== true ||
+                !state.worker.bind || !state.worker.challenge || !state.gpu.path || nativeBinding ||
+                engine.busy || state.worker.pending || (nativeAttempt && nativeAttempt.source === state.gpu && nativeAttempt.key === state.key)) return;
+            const { gpu, worker, place, key } = state;
+            nativeAttempt = { source:gpu, key };
+            const savedGeneration = gpu.generation, savedSocket = gpu.sock;
+            const marker = worker.challenge(place.w,place.h);
+            const binding = nativeBinding = { source:gpu, key };
+            function complete() {
+                if (nativeBinding !== binding) return;
+                nativeBinding = null;
+                if (ctx.display && ctx.display.gpu === gpu && gpu.ready &&
+                    (gpu.generation === savedGeneration || (savedSocket && gpu.sock === savedSocket))) {
+                    gpu.place(Object.assign({},ctx.display.place));
+                    gpu.show(!!ctx.display.active('GAME'));
+                }
+                updateGPU();
+                queueFrame();
+            }
+            try {
+                gpu.show(false);
+                gpu.place(Object.assign({},place,{ x:marker[0], y:marker[1] }));
+                if (!worker.bind(gpu.path,marker,complete)) complete();
+            } catch (failure) {
+                if (log.warn) log.warn('Native GPU binding: ' + failure.message);
+                complete();
+            }
+        }
         function updateGPU() {
             const display = ctx.display, gpu = display && display.gpu, worker = engine.worker;
+            const state = nativeSurface();
+            if (worker && worker.view && !boundNative(state)) worker.view([0,0,408,720],false);
+            bindNative(state);
             const retained = !going && !shown() && gpu === gpuSource && gpu && gpu.generation === gpuGeneration;
-            const videoReady = !!(gpu && gpu.ready && gpu.native && gpu.video && (retained || display.active('GAME')));
-            const enabled = !!(videoReady && worker && worker.ready);
+            const rendererReady = !!(gpu && gpu.ready && gpu.native && (retained || display.active('GAME')));
+            const enabled = !!(rendererReady && worker && worker.ready && (gpu.video || boundNative(state)));
             const source = enabled ? gpu : null, generation = enabled ? gpu.generation : 0;
             const workerVersion = enabled ? worker.generation : 0;
-            if (enabled === gpuEnabled && source === gpuSource && generation === gpuGeneration && workerVersion === workerGeneration) return;
-            gpuReset = enabled && (!lastFrameGPU || workerVersion !== capturedWorkerGeneration);
-            gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation; workerGeneration = workerVersion;
-            if (!videoReady) frameMode = null;
-            fpsSample = null;
+            if (enabled !== gpuEnabled || source !== gpuSource || generation !== gpuGeneration || workerVersion !== workerGeneration) {
+                gpuReset = enabled && (!lastFrameGPU || workerVersion !== capturedWorkerGeneration);
+                gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation; workerGeneration = workerVersion;
+                if (!rendererReady || (!gpu.video && !boundNative(state))) frameMode = null;
+                fpsSample = null;
+            }
+            syncNative();
         }
         function acceptFrame(gpu) {
             updateGPU();
@@ -105,7 +173,7 @@ mgu.run({
             if (going && engine.playing && gameLoop && !(gpu && gpu.waiting)) gameLoop.kick();
         }
         function queueFrame() {
-            if (frameTimer !== null || !going || !engine.ready || engine.busy || engine.dead) return;
+            if (frameTimer !== null || nativeBinding || !going || !engine.ready || engine.busy || engine.dead) return;
             // A completed engine frame need not wait for the next renderer tick.
             frameTimer = setTimeout(requestFrame, Math.max(0, nextFrameAt-Date.now()));
         }
@@ -113,6 +181,7 @@ mgu.run({
             frameTimer = null; sync();
             if (!going || !engine.ready || engine.busy || engine.dead) return;
             updateGPU();
+            if (nativeBinding) return;
             const now = Date.now(), dt = Math.min(.1, Math.max(1/120, (now-lastFrame)/1000));
             const previous = submitted;
             const command = Object.assign({ dt, side_width:sideWidth, gpu:gpuEnabled, gpu_reset:gpuReset }, controls.take());
@@ -138,12 +207,26 @@ mgu.run({
         }, log);
         function touch(phase, x, y) { if (going) controls.touch(phase, x, y); }
         // Listen to the renderer's existing down/move/up stream for held steering.
+        function rendererHidden() {
+            const worker = engine.worker;
+            if (worker && worker.view) worker.view([0,0,408,720],false);
+        }
         function connectTouch() {
             const gpu = ctx.display && ctx.display.gpu;
             if (gpu === touchSource) return;
-            if (touchSource) touchSource.removeListener('touch', touch);
+            if (touchSource) {
+                touchSource.removeListener('touch', touch);
+                touchSource.removeListener('state', syncNative);
+                touchSource.removeListener('close', rendererHidden);
+                touchSource.removeListener('closed', rendererHidden);
+            }
             touchSource = gpu;
-            if (gpu) gpu.on('touch', touch);
+            if (gpu) {
+                gpu.on('touch', touch);
+                gpu.on('state', syncNative);
+                gpu.on('close', rendererHidden);
+                gpu.on('closed', rendererHidden);
+            }
         }
         ui.onClick('BTN_PLAY', () => { ui.open('GAME'); sync(); });
         ui.onClick('BTN_SELECT', () => { if (going) controls.select(); });
@@ -179,8 +262,9 @@ mgu.run({
             }
             const stats = renderer && renderer.ready && renderer.stats;
             const fresh = stats && stats.at >= fpsSample.start && now >= stats.at && now - stats.at < 2500;
-            const mode = frameMode === 'gpu' ? 'GPU' : 'CPU';
-            const label = mode + ' | Game ' + fpsSample.rate + ' | Render ' + (fresh ? stats.fps : '--') + ' FPS';
+            const mode = frameMode === 'native' ? 'Native' : frameMode === 'gpu' ? 'Video' : 'CPU';
+            const label = mode === 'Native' ? 'Native | Presented ' + fpsSample.rate + ' FPS' :
+                mode + ' | Game ' + fpsSample.rate + ' | Render ' + (fresh ? stats.fps : '--') + ' FPS';
             const size = Math.min(22 * height / 720, side / 20);
             if (size < 9) return;
             const m = fpsSample.measurement;
@@ -218,6 +302,7 @@ mgu.run({
             const sw = p && p.full ? p.w : W, sh = p && p.full ? p.h : H;
             sideWidth = Math.max(0,Math.min(2048,Math.ceil((sw-sh*544/960)/2*960/sh)));
             controls.move(paintDt);
+            syncNative();
             const message = error ? 'Engine stopped: ' + error.message : !frames ? 'Loading original Doodle Jump...' : null;
             if (p && p.full) {
                 if (!recorder || recorder.w !== p.w || recorder.h !== p.h) recorder = new Recorder(p.w, p.h);

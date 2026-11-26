@@ -1,5 +1,5 @@
 [Unit]
-Description=Doodle Jump offscreen GPU worker
+Description=Doodle Jump GPU presentation worker
 Requires=doodle-gpu.socket
 After=winston.service doodle-gpu.socket
 

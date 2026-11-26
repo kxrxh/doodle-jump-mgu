@@ -219,6 +219,7 @@ class Engine {
                 if (body.length<12) throw new Error('Short scenery texture');
                 const id=body.readUInt32LE(0),w=body.readUInt32LE(4),h=body.readUInt32LE(8);
                 if (id<2 || id>100 || !w || !h || w>2048 || h>2048 || body.length!==12+w*h*4) throw new Error('Invalid scenery texture');
+                if (id === 20 && this.worker) this.worker.setCursorImage(w,h,body.slice(12));
                 if (this.onTexture) this.onTexture(id,w,h,body.slice(12));
             } else if (type === 'EVT1') {
                 const event = JSON.parse(body.toString('utf8'));
