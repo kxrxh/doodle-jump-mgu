@@ -1,13 +1,13 @@
 # Development
 
 Run commands from the repository root. Builds happen off-device; MGU runs the
-prebuilt x86-64 host and a small Rust/WASM module through Store's JavaScript SDK.
+prebuilt x86-64 host. Rust owns input, frame scheduling, game lifecycle and the
+GPU worker connection. Two app JavaScript files bridge Store's SDK and launch the host.
 
 | Directory | Contents |
 | --- | --- |
-| `apps/kxrxh_doodle_jump/` | Store launcher and renderer/socket adapters |
-| `runtime/host/` | Native Rust host: assets, JNI, audio and engine lifecycle |
-| `runtime/ui/` | Rust/WASM controls and side scenery |
+| `apps/kxrxh_doodle_jump/` | Store SDK adapter and native process bootstrap |
+| `runtime/host/` | Rust host: assets, JNI, audio, input, scenery, scheduling and GPU transport |
 | `runtime/recomp/` | ARM-to-x86-64 translator and iparecomp provenance |
 | `runtime/*.cpp` | C++ drawing, mixer and frame encoding |
 | `native/doodle-gpu/` | Independent EGL/Wayland presentation worker |
@@ -33,7 +33,7 @@ For source development, install Python 3.12+, Node.js, Docker and clang, then ru
 ./run-local.sh 8079
 ```
 
-The script prepares a development environment, builds the Linux host and WASM,
+The script prepares a development environment, builds the Linux host,
 and opens the browser emulator. The native host runs in Docker with a 512 MiB
 limit. No Python interpreter or compiler is required on the MGU.
 
@@ -43,10 +43,8 @@ After preview setup:
 
 ```sh
 .venv/bin/python runtime/prepare.py
-.venv/bin/python tools/build_ui.py
 .venv/bin/python tools/build_host.py --command test
 .venv/bin/python tools/build_host.py --command clippy
-.venv/bin/python tools/build_ui.py --check
 PYTHONPATH=tools .venv/bin/python -m unittest discover -s tests/tools -v
 for suite in tests/runtime/test_*.js; do node "$suite" || exit 1; done
 node kit/tools/test_runtime.js
@@ -60,6 +58,11 @@ size and SHA-256 in `tools/runtime.json` before packaging a new release.
 The ARM library supplies original data; translated game logic runs as x86-64
 code in `recomp/game.so`. All 12 themes and original sound assets are retained.
 
+Normal startup uses `doodle-host --session`: the host clocks frames and sends GPU
+scenes directly to the worker. Its explicit per-frame interface remains available
+for deterministic comparisons and benchmarks. The browser emulator uses the
+toolkit's separate WebAssembly renderer.
+
 ## Compare against the previous host
 
 The Python host is an external, SHA-pinned v0.12.1 development oracle. Prepare it
@@ -72,12 +75,18 @@ without maintaining a second host in this repository:
 
 Run these suites in Linux x86-64 with Store's CPython 3.12. Backend tests use the
 current C++ libraries; frozen-host tests use the immutable release. Run each suite
-in a separate Python process:
+in a separate Python process. Inside the Linux test environment, use the pinned
+Rust toolchain and current native libraries:
 
 ```sh
+export PATH="$PWD/.cache/rust-host/toolchain/bin:$PATH"
+export CARGO_HOME="$PWD/.cache/rust-host/cargo"
+export CARGO_TARGET_DIR="$PWD/.cache/rust-host/target"
+export DOODLE_NATIVE_DIR="$PWD/runtime/bundle"
+export LD_LIBRARY_PATH="$PWD/runtime/bundle:$PWD/runtime/bundle/recomp"
 python3 -m unittest discover -s tests/reference/backends -v
 python3 -m unittest discover -s tests/recomp -v
-python3 -m unittest discover -s tests/host -v
+PYTHONPATH=tools python3 -m unittest discover -s tests/host -v
 python3 tools/compare_hosts.py --mode parity
 python3 tools/compare_hosts.py --mode benchmark --themes 1 10
 ```

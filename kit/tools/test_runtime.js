@@ -502,7 +502,15 @@ test('a new scale keeps the uploads (the renderer keeps them), a new size sends 
         try { await fn(); console.log('ok    ' + name); } catch (e) { failed++; console.log('FAIL  ' + name + '\n      ' + e.message.split('\n')[0]); }
     }
     server.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    function remove(directory) {
+        fs.readdirSync(directory).forEach(name => {
+            const file = path.join(directory, name);
+            if (fs.lstatSync(file).isDirectory()) remove(file);
+            else fs.unlinkSync(file);
+        });
+        fs.rmdirSync(directory);
+    }
+    remove(dir);
     console.log(failed ? failed + ' of ' + cases.length + ' failed' : 'runtime: all ok');
     process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

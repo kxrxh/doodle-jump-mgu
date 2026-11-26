@@ -35,7 +35,7 @@ def main():
         parser.error('port must be between 1 and 65535')
     if sys.version_info < (3, 12):
         raise SystemExit('Local builds require Python 3.12 or newer')
-    for script in ('tools/get_original.py', 'runtime/prepare.py', 'tools/build_ui.py'):
+    for script in ('tools/get_original.py', 'runtime/prepare.py'):
         subprocess.run([sys.executable, str(ROOT / script)], cwd=ROOT, check=True)
     wrapper = ROOT / '.cache/run-local/doodle-host'
     wrapper.parent.mkdir(parents=True, exist_ok=True)

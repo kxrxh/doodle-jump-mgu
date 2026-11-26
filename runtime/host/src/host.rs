@@ -160,7 +160,7 @@ unsafe extern "C" fn callback(user: ffi::Ptr, address: u64, output: *mut ffi::Na
     }
 }
 impl Host {
-    fn new(
+    pub(crate) fn new(
         original: &Path,
         data: &Path,
         runtime: &Path,
@@ -506,7 +506,7 @@ impl Host {
         )
     }
 }
-fn packet(output: &mut impl Write, kind: &[u8; 4], bytes: &[u8]) -> Result<()> {
+pub(crate) fn packet(output: &mut impl Write, kind: &[u8; 4], bytes: &[u8]) -> Result<()> {
     let size = u32::try_from(bytes.len()).map_err(|_| "Engine packet is too large")?;
     output
         .write_all(kind)
@@ -515,14 +515,14 @@ fn packet(output: &mut impl Write, kind: &[u8; 4], bytes: &[u8]) -> Result<()> {
         .and_then(|_| output.flush())
         .map_err(|e| e.to_string())
 }
-fn event(out: &mut impl Write, value: Value) -> Result<()> {
+pub(crate) fn event(out: &mut impl Write, value: Value) -> Result<()> {
     packet(
         out,
         b"EVT1",
         &serde_json::to_vec(&value).map_err(|e| e.to_string())?,
     )
 }
-fn texture(out: &mut impl Write, id: u32, image: &Image) -> Result<()> {
+pub(crate) fn texture(out: &mut impl Write, id: u32, image: &Image) -> Result<()> {
     let mut bytes = Vec::with_capacity(12 + image.pixels.len());
     for v in [id, image.width, image.height] {
         bytes.extend(v.to_le_bytes());
@@ -560,6 +560,7 @@ pub fn run() -> Result<()> {
     let mut data = None;
     let mut runtime = None;
     let mut playback = true;
+    let mut session = false;
     let mut audio_output = None;
     let mut audio_events = None;
     let mut epoch = SystemTime::now()
@@ -573,6 +574,7 @@ pub fn run() -> Result<()> {
             "--data" => data = args.next().map(PathBuf::from),
             "--runtime" => runtime = args.next().map(PathBuf::from),
             "--no-audio" => playback = false,
+            "--session" => session = true,
             "--audio-output" => {
                 audio_output = args.next().map(PathBuf::from);
                 playback = false;
@@ -597,20 +599,160 @@ pub fn run() -> Result<()> {
     let data = data.ok_or("A data directory is required")?;
     let mut output = io::stdout().lock();
     let captures = (audio_output, audio_events);
-    let result = run_process(
-        &original,
-        &data,
-        &runtime,
-        epoch,
-        playback,
-        captures,
-        &mut output,
-    );
-    if let Err(e) = &result {
+    let result = if session {
+        crate::session::run(&original, &data, &runtime, epoch, playback, captures)
+    } else {
+        run_process(
+            &original,
+            &data,
+            &runtime,
+            epoch,
+            playback,
+            captures,
+            &mut output,
+        )
+    };
+    if let Err(e) = &result
+        && !session
+    {
         let _ = event(&mut output, json!({"type":"error","message":e}));
     }
     result
 }
+#[derive(Default)]
+pub(crate) struct FrameState {
+    playing: bool,
+    gpu_mode: bool,
+    paper: Paper,
+    projection: Value,
+}
+
+pub(crate) struct FrameRequest<'a> {
+    pub tilt: f64,
+    pub touches: &'a [[f64; 4]],
+    pub dt: f64,
+    pub side_width: u64,
+    pub gpu: bool,
+    pub reset: bool,
+    pub timing: bool,
+}
+
+pub(crate) struct FrameUpdate {
+    pub texture: Option<Image>,
+    pub paper: Option<Value>,
+    pub dialogs: Vec<Value>,
+    pub playing: Option<bool>,
+    pub payload: Vec<u8>,
+    pub gpu: bool,
+    pub timing: Option<(f64, f64)>,
+}
+
+impl FrameState {
+    pub(crate) fn render(
+        &mut self,
+        host: &Host,
+        request: FrameRequest<'_>,
+        audio: Option<&mut std::fs::File>,
+    ) -> Result<FrameUpdate> {
+        let began = Instant::now();
+        let cpu_started = if request.timing { thread_cpu_ms()? } else { 0. };
+        if request.gpu || self.gpu_mode {
+            host.graphics()?.begin(request.gpu, request.reset)?;
+        }
+        if request.gpu != self.gpu_mode {
+            let g = host.graphics()?;
+            if !g.encoder.get().is_null() {
+                unsafe { ffi::frame_encoder_destroy(g.encoder.replace(std::ptr::null_mut())) }
+            }
+            self.gpu_mode = request.gpu;
+        }
+        host.step(request.tilt, request.touches, request.dt)?;
+        if let Some(file) = audio {
+            let pcm = host.audio.mix(735)?;
+            let bytes = pcm
+                .iter()
+                .flat_map(|sample| sample.to_le_bytes())
+                .collect::<Vec<_>>();
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+        }
+        let (projection, texture) = host.paper(&mut self.paper, request.side_width)?;
+        let paper = if projection != self.projection {
+            self.projection = projection.clone();
+            Some(projection)
+        } else {
+            None
+        };
+        let dialogs = std::mem::take(&mut *host.jni()?.dialogs.borrow_mut());
+        let now = host.jni()?.playing.get();
+        let playing = if now != self.playing {
+            self.playing = now;
+            Some(now)
+        } else {
+            None
+        };
+        let payload = if request.gpu {
+            host.graphics()?.gpu()?
+        } else {
+            host.graphics()?.pixels()?
+        };
+        let timing = if request.timing {
+            Some((
+                began.elapsed().as_secs_f64() * 1000.,
+                thread_cpu_ms()? - cpu_started,
+            ))
+        } else {
+            None
+        };
+        Ok(FrameUpdate {
+            texture,
+            paper,
+            dialogs,
+            playing,
+            payload,
+            gpu: request.gpu,
+            timing,
+        })
+    }
+}
+
+impl FrameUpdate {
+    pub(crate) fn emit(&self, out: &mut impl Write) -> Result<()> {
+        if let Some(image) = &self.texture {
+            texture(out, 2, image)?;
+        }
+        if let Some(paper) = &self.paper {
+            event(out, json!({"type":"scenery","paper":paper}))?;
+        }
+        for dialog in &self.dialogs {
+            event(out, dialog.clone())?;
+        }
+        if let Some(playing) = self.playing {
+            event(out, json!({"type":"playing","value":playing}))?;
+        }
+        if let Some((wall, cpu)) = self.timing {
+            event(out, json!({"type":"timing","wallMs":wall,"cpuMs":cpu}))?;
+        }
+        packet(out, if self.gpu { b"GPF1" } else { b"FRM2" }, &self.payload)
+    }
+}
+
+impl Host {
+    pub(crate) fn action(&self, action: &str) -> Result<()> {
+        match action {
+            "back" => self.send(-7, 0, 0, 0).map(|_| ()),
+            "pause" | "resume" => {
+                let paused = action == "pause";
+                self.send(if paused { 28 } else { 29 }, 0, 0, 0)?;
+                self.audio_message(if paused { 12 } else { 13 }, 0, 1., 0)
+            }
+            _ => Err("Invalid game action".into()),
+        }
+    }
+    pub(crate) fn reply_dialog(&self, id: u32, button: &str) -> Result<()> {
+        self.jni()?.reply_dialog(&self.machine, id, button)
+    }
+}
+
 fn run_process(
     original: &Path,
     data: &Path,
@@ -640,10 +782,7 @@ fn run_process(
     event(out, json!({"type":"ready"}))?;
     let mut tilt = 0.;
     let mut paused = false;
-    let mut playing = false;
-    let mut gpu_mode = false;
-    let mut paper = Paper::default();
-    let mut projection = Value::Null;
+    let mut frame_state = FrameState::default();
     let mut input = io::stdin().lock();
     loop {
         let mut bytes = vec![];
@@ -736,55 +875,20 @@ fn run_process(
         let gpu = boolean(c.get("gpu"), false)?;
         let reset = boolean(c.get("gpu_reset"), false)?;
         let timing = boolean(c.get("timing"), false)?;
-        let began = Instant::now();
-        let cpu_started = if timing { thread_cpu_ms()? } else { 0. };
-        if gpu || gpu_mode {
-            host.graphics()?.begin(gpu, reset)?;
-        }
-        if gpu != gpu_mode {
-            let g = host.graphics()?;
-            if !g.encoder.get().is_null() {
-                unsafe { ffi::frame_encoder_destroy(g.encoder.replace(std::ptr::null_mut())) }
-            }
-            gpu_mode = gpu;
-        }
-        host.step(tilt, &parsed, dt)?;
-        if let Some(file) = audio_output.as_mut() {
-            let pcm = host.audio.mix(735)?;
-            let bytes = pcm
-                .iter()
-                .flat_map(|sample| sample.to_le_bytes())
-                .collect::<Vec<_>>();
-            file.write_all(&bytes).map_err(|e| e.to_string())?;
-        }
-        let (p, image) = host.paper(&mut paper, width)?;
-        if let Some(image) = image {
-            texture(out, 2, &image)?;
-        }
-        if p != projection {
-            projection = p;
-            event(out, json!({"type":"scenery","paper":projection}))?;
-        }
-        for dialog in std::mem::take(&mut *host.jni()?.dialogs.borrow_mut()) {
-            event(out, dialog)?;
-        }
-        let now = host.jni()?.playing.get();
-        if now != playing {
-            playing = now;
-            event(out, json!({"type":"playing","value":playing}))?;
-        }
-        let payload = if gpu {
-            host.graphics()?.gpu()?
-        } else {
-            host.graphics()?.pixels()?
-        };
-        if timing {
-            event(
-                out,
-                json!({"type":"timing","wallMs":began.elapsed().as_secs_f64()*1000.,"cpuMs":thread_cpu_ms()?-cpu_started}),
-            )?;
-        }
-        packet(out, if gpu { b"GPF1" } else { b"FRM2" }, &payload)?;
+        let update = frame_state.render(
+            &host,
+            FrameRequest {
+                tilt,
+                touches: &parsed,
+                dt,
+                side_width: width,
+                gpu,
+                reset,
+                timing,
+            },
+            audio_output.as_mut(),
+        )?;
+        update.emit(out)?;
     }
     Ok(())
 }

@@ -1,5 +1,7 @@
 'use strict';
 const assert = require('assert');
+const { Session } = require('../../apps/kxrxh_doodle_jump/engine');
+assert.strictEqual(typeof Session, 'function', 'the native session owns scheduling and GPU communication');
 let PacketReader;
 try { ({ PacketReader } = require('../../apps/kxrxh_doodle_jump/engine')); }
 catch (e) { assert.fail('The MGU original-engine packet reader is missing: ' + e.message); }
@@ -166,8 +168,7 @@ try {
     assert.strictEqual(fs.readFileSync(path.join(out,'a/data'),'utf8'),'short reads still restore these exact bytes');
 } finally { remove(dir); }
 console.log('Engine pack extraction and traversal rejection: passed');
-const {Engine}=require('../../apps/kxrxh_doodle_jump/engine');
-const engine=new Engine('',{info(){},error(){}}),textures=[];
+const engine=new Session('',{info(){},error(){}}),textures=[];
 engine.onTexture=(id,w,h,pixels)=>textures.push([id,w,h,Array.from(pixels)]);
 const tex=Buffer.alloc(16);tex.writeUInt32LE(2,0);tex.writeUInt32LE(1,4);tex.writeUInt32LE(1,8);tex.set([1,2,3,255],12);
 engine.packet('TEX1',tex);
@@ -175,28 +176,16 @@ assert.deepStrictEqual(textures,[[2,1,1,[1,2,3,255]]]);
 tex.writeUInt32LE(1,0);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 tex.writeUInt32LE(2,0);tex.writeUInt32LE(4096,4);assert.throws(()=>engine.packet('TEX1',tex),/Invalid/);
 console.log('Scenery texture boundaries: passed');
-const paper={width:480,height:512,u:.25,v:.75,du:1/544,dv:1/960,alpha:.5};
-engine.packet('EVT1',Buffer.from(JSON.stringify({type:'scenery',paper})));
-assert.deepStrictEqual(engine.scenery.paper,paper);
-for(const invalid of [{du:0},{dv:-1},{width:2047},{height:1.5},{u:-.1},{v:1.1},{alpha:2},{du:null}]) {
-    assert.throws(()=>engine.packet('EVT1',Buffer.from(JSON.stringify({type:'scenery',paper:Object.assign({},paper,invalid)}))),/paper/i);
-    assert.deepStrictEqual(engine.scenery.paper,paper,'Bad projection must preserve the last complete state');
-}
-engine.packet('EVT1',Buffer.from(JSON.stringify({type:'scenery',paper:null})));
-assert.strictEqual(engine.scenery.paper,null);
-console.log('Paper projection boundaries: passed');
 const frames=[];
-engine.onFrame=(pixels,w,h)=>frames.push([pixels.length,w,h,pixels[0],pixels[pixels.length-1]]);
+engine.onPixels=(pixels,w,h)=>frames.push([pixels.length,w,h,pixels[0],pixels[pixels.length-1]]);
 for(const size of [[544,960],[408,720]]) {
     const w=size[0],h=size[1],body=Buffer.alloc(8+w*h*4,0xCD);
-    body.writeUInt32LE(w,0);body.writeUInt32LE(h,4);engine.busy=true;
+    body.writeUInt32LE(w,0);body.writeUInt32LE(h,4);
     engine.packet('FRM1',body);
-    assert.strictEqual(engine.busy,false,'complete frames release the next engine request');
     assert.deepStrictEqual(frames[frames.length-1],[w*h*4,w,h,0xCD,0xCD]);
     for(const malformed of [body.slice(0,-1),Buffer.concat([body,Buffer.from([0])])]) {
-        engine.busy=true;
+
         assert.throws(()=>engine.packet('FRM1',malformed),/dimensions/i);
-        assert.strictEqual(engine.busy,true,'malformed frames must not release an in-flight request');
     }
 }
 for(const size of [[408,960],[544,720],[0,0],[4096,4096]]) {
@@ -211,13 +200,12 @@ function patchFrame(w,h,rectangles) {
     rectangles.forEach((r,i)=>[r.x,r.y,r.w,r.h].forEach((v,j)=>header.writeUInt32LE(v,12+i*16+j*4)));
     return Buffer.concat([header].concat(rectangles.map(r=>r.data)));
 }
-const partial=new Engine('',{info(){},error(){}}),updates=[];
-partial.onFrame=(pixels,w,h,patches)=>updates.push({pixels:Buffer.from(pixels),live:pixels,w,h,patches});
+const partial=new Session('',{info(){},error(){}}),updates=[];
+partial.onPixels=(pixels,w,h,patches)=>updates.push({pixels:Buffer.from(pixels),live:pixels,w,h,patches});
 const key=patchFrame(408,720,[{x:0,y:0,w:408,h:720,data:Buffer.alloc(408*720*4,7)}]);
 assert.throws(()=>partial.packet('FRM2',patchFrame(408,720,[])),/frame|key|initial/i,'a partial stream starts with a complete frame');
 assert.throws(()=>partial.packet('FRM2',patchFrame(408,720,[{x:0,y:0,w:1,h:1,data:Buffer.alloc(4)}])),/key|initial/i);
-partial.busy=true;partial.packet('FRM2',key);
-assert.strictEqual(partial.busy,false);
+partial.packet('FRM2',key);
 assert.deepStrictEqual(updates[0].pixels,Buffer.alloc(408*720*4,7));
 const changes=[{x:407,y:719,w:1,h:1,data:Buffer.from([8,9,10,11])},
     {x:2,y:3,w:2,h:2,data:Buffer.from([12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27])}];
@@ -242,9 +230,8 @@ const malformed=[deltaPacket.slice(0,-1),Buffer.concat([deltaPacket,Buffer.from(
 const excessive=Buffer.alloc(12);excessive.writeUInt32LE(408,0);excessive.writeUInt32LE(720,4);excessive.writeUInt32LE(65,8);
 malformed.push(excessive);
 for(const body of malformed) {
-    partial.busy=true;
+
     assert.throws(()=>partial.packet('FRM2',body),/frame|region|key/i);
-    assert.strictEqual(partial.busy,true,'invalid updates do not acknowledge an engine frame');
     assert.deepStrictEqual(updates[2].live,expected,'invalid updates cannot modify published pixels');
     assert.strictEqual(updates.length,3);
 }
@@ -298,10 +285,20 @@ console.log('Lossless region frame reconstruction and validation: passed');
 }
 console.log('Region packet recycling across unchanged and fragmented frames: passed');
 
+
+assert.throws(()=>new PacketReader(()=>{}).feed(wire('GPF1',Buffer.alloc(0))),/type/i,
+    'GPU scene bytes stay between Rust and the GPU worker');
+const events=[];engine.onEvent=value=>events.push(value);
+engine.packet('EVT1',Buffer.from(JSON.stringify({type:'lifecycle',running:false,info:'Paused'})));
+assert.deepStrictEqual(events,[{type:'lifecycle',running:false,info:'Paused'}]);
+for(const bad of ['null','[]','{}','{"type":3}'])
+    assert.throws(()=>engine.packet('EVT1',Buffer.from(bad)),/event/i);
+console.log('Native session events and direct GPU boundary: passed');
+
 const childProcess=require('child_process'),EventEmitter=require('events');
 const savedSpawn=childProcess.spawn;
-const envNames=['DOODLE_ENGINE','DOODLE_HOST','DOODLE_ORIGINAL','DOODLE_DATA'];
-const savedEnv={};envNames.forEach(key=>savedEnv[key]=process.env[key]);
+const names=['DOODLE_ENGINE','DOODLE_HOST','DOODLE_ORIGINAL','DOODLE_DATA'];
+const environment={};names.forEach(key=>environment[key]=process.env[key]);
 const local=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-launch-'));
 let launched;
 try {
@@ -309,114 +306,98 @@ try {
         launched={command,args,options};
         const child=new EventEmitter();
         child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();child.kill=()=>{};
-        launched.child=child;
-        return child;
+        launched.child=child;return child;
     };
     delete require.cache[require.resolve('../../apps/kxrxh_doodle_jump/engine')];
-    const LaunchEngine=require('../../apps/kxrxh_doodle_jump/engine').Engine;
+    const LaunchSession=require('../../apps/kxrxh_doodle_jump/engine').Session;
     process.env.DOODLE_ENGINE=local;delete process.env.DOODLE_HOST;delete process.env.DOODLE_ORIGINAL;delete process.env.DOODLE_DATA;
-    const launchedEngine=new LaunchEngine('/game-data',{info(){},error(){}});
-    launchedEngine.start();
-    assert.strictEqual(launched.command,path.join(local,'doodle-host'),'runs the precompiled native host');
-    assert.strictEqual(launched.options.env.MALLOC_MMAP_THRESHOLD_,'1048576','large engine temporaries return to the OS after use');
-    assert.deepStrictEqual(launched.args,['--data','/game-data/game','--original',path.join(local,'original'),'--runtime',local]);
-    const delivered=[];
-    launchedEngine.onFrame=(pixels)=>delivered.push(pixels);
+    const session=new LaunchSession('/game-data',{info(){},error(){}});session.start();
+    assert.strictEqual(launched.command,path.join(local,'doodle-host'));
+    assert.strictEqual(launched.options.env.MALLOC_MMAP_THRESHOLD_,'1048576');
+    assert.deepStrictEqual(launched.args,['--session','--data','/game-data/game','--original',path.join(local,'original'),'--runtime',local]);
+    const delivered=[];session.onPixels=pixels=>delivered.push(pixels);
     for(const size of [[408,720],[408,720],[408,720],[544,960],[408,720]]) {
-        const body=Buffer.alloc(8+size[0]*size[1]*4,delivered.length+1);
-        body.writeUInt32LE(size[0],0);body.writeUInt32LE(size[1],4);
+        const body=Buffer.alloc(8+size[0]*size[1]*4,delivered.length+1);body.writeUInt32LE(size[0],0);body.writeUInt32LE(size[1],4);
         launched.child.stdout.emit('data',wire('FRM1',body));
     }
     assert.strictEqual(delivered.length,5);
-    assert.strictEqual(delivered[2].buffer,delivered[0].buffer,'Engine.start enables frame recycling');
+    assert.strictEqual(delivered[2].buffer,delivered[0].buffer);
     assert.strictEqual(delivered[2].byteOffset,delivered[0].byteOffset);
     assert.strictEqual(delivered[3].length,544*960*4);
-    assert.strictEqual(delivered[3][0],4,'changing dimensions preserves the published large frame');
-    assert.strictEqual(delivered[4].length,408*720*4);
     assert.strictEqual(delivered[4][delivered[4].length-1],5);
     process.env.DOODLE_HOST='/local/native-wrapper';process.env.DOODLE_ORIGINAL='/local/original';
-    new LaunchEngine('/game-data',{info(){},error(){}}).start();
-    assert.strictEqual(launched.command,'/local/native-wrapper','the local preview can launch a native Docker wrapper');
-    assert.deepStrictEqual(launched.args,['--data','/game-data/game','--original','/local/original','--runtime',local]);
+    new LaunchSession('/game-data',{info(){},error(){}}).start();
+    assert.strictEqual(launched.command,'/local/native-wrapper');
+    assert.deepStrictEqual(launched.args,['--session','--data','/game-data/game','--original','/local/original','--runtime',local]);
 } finally {
     childProcess.spawn=savedSpawn;
-    for(const key of envNames) { if(savedEnv[key]===undefined)delete process.env[key];else process.env[key]=savedEnv[key]; }
+    names.forEach(key=>{if(environment[key]===undefined)delete process.env[key];else process.env[key]=environment[key];});
     remove(local);
 }
-console.log('Native host launch, development overrides and frame recycling: passed');
+console.log('Native session launch, development overrides and frame recycling: passed');
 
 async function nativeLaunches() {
     const directory=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-native-launch-'));
     const source=path.resolve(__dirname,'../../apps/kxrxh_doodle_jump');
-    const dataDir=path.join(directory,'saved-game'),runtime=path.join(dataDir,'engine');
-    const names=['DOODLE_ENGINE','DOODLE_HOST','DOODLE_ORIGINAL','DOODLE_DATA'];
-    const environment={};names.forEach(key=>environment[key]=process.env[key]);
+    const dataDir=path.join(directory,'saved-game'),runtime=path.join(dataDir,'engine'),received=path.join(directory,'received.json');
+    const previous={};names.forEach(key=>previous[key]=process.env[key]);
     function program(original,runtime) {
-        const arguments_=['--data',path.join(dataDir,'game'),'--original',original,'--runtime',runtime];
+        const args=['--session','--data',path.join(dataDir,'game'),'--original',original,'--runtime',runtime];
         return '#!'+process.execPath+'\n'+
-            "'use strict';const assert=require('assert');assert.deepStrictEqual(process.argv.slice(2),"+JSON.stringify(arguments_)+");"+
+            "'use strict';const fs=require('fs'),assert=require('assert');assert.deepStrictEqual(process.argv.slice(2),"+JSON.stringify(args)+");let commands=[];"+
             "function packet(kind,body){const h=Buffer.alloc(8);h.write(kind);h.writeUInt32LE(body.length,4);return Buffer.concat([h,body]);}"+
             "const ready=packet('EVT1',Buffer.from(JSON.stringify({type:'ready'})));process.stdout.write(ready.slice(0,3));"+
             "setImmediate(()=>process.stdout.write(ready.slice(3)));let input='';"+
-            "process.stdin.on('data',bytes=>{input+=bytes;let n;while((n=input.indexOf('\\n'))>=0){const command=JSON.parse(input.slice(0,n));input=input.slice(n+1);"+
-            "assert.strictEqual(command.frame,true);assert.strictEqual(command.gpu,false);assert.strictEqual(command.tilt,.25);"+
-            "process.stdout.write(packet('EVT1',Buffer.from(JSON.stringify({type:'playing',value:true}))));"+
-            "const frame=Buffer.alloc(8+408*720*4,17);frame.writeUInt32LE(408,0);frame.writeUInt32LE(720,4);process.stdout.write(packet('FRM1',frame));}});\n";
+            "process.stdin.on('data',bytes=>{input+=bytes;let n;while((n=input.indexOf('\\n'))>=0){const c=JSON.parse(input.slice(0,n));input=input.slice(n+1);commands.push(c);"+
+            "if(c.shutdown){fs.writeFileSync("+JSON.stringify(received)+",JSON.stringify(commands));process.exit(0);}"+
+            "assert(!c.frame,'JavaScript must not request game frames');"+
+            "if(c.button==='select'){const frame=Buffer.alloc(28+408*720*4,17);frame.writeUInt32LE(408,0);frame.writeUInt32LE(720,4);frame.writeUInt32LE(1,8);frame.writeUInt32LE(0,12);frame.writeUInt32LE(0,16);frame.writeUInt32LE(408,20);frame.writeUInt32LE(720,24);process.stdout.write(packet('FRM2',frame));}}});\n";
     }
     async function run(Launcher) {
-        const errors=[],engine=new Launcher(dataDir,{info(){},error(message){errors.push(message);}});
+        const errors=[],session=new Launcher(dataDir,{info(){},error(message){errors.push(message);}});
         let timer,child;
         try {
             await new Promise((resolve,reject)=>{
-                timer=setTimeout(()=>reject(new Error('Native host handshake timed out: '+errors.join('; '))),5000);
-                engine.onError=reject;
-                engine.onFrame=(pixels,w,h)=>{
+                timer=setTimeout(()=>reject(new Error('Native session handshake timed out: '+errors.join('; '))),5000);
+                session.onError=reject;
+                session.onEvent=event=>{if(event.type==='ready'){session.send({ui:{shown:true,focused:true}});session.send({button:'select'});}};
+                session.onPixels=(pixels,w,h,patches)=>{
                     try {
-                        assert.strictEqual(engine.busy,false);
-                        assert.strictEqual(engine.playing,true);
                         assert.strictEqual(w,408);assert.strictEqual(h,720);
                         assert.deepStrictEqual(pixels,Buffer.alloc(408*720*4,17));
-                        resolve();
+                        assert.strictEqual(patches.length,1);resolve();
                     } catch(error) { reject(error); }
                 };
-                engine.start();child=engine.child;
-                let sent=false;
-                child.stdout.on('data',()=>{
-                    if(engine.ready&&!sent) {
-                        sent=true;
-                        assert.strictEqual(engine.frame({gpu:false,tilt:.25}),true);
-                    }
-                });
+                session.start();child=session.child;
             });
+            assert.throws(()=>session.send({invalid:'x'.repeat(4096)}),/size limit/);
         } finally {
-            clearTimeout(timer);
-            engine.stop();
+            clearTimeout(timer);session.stop();
             if(child&&child.exitCode===null)await new Promise(resolve=>child.once('exit',resolve));
         }
+        assert.strictEqual(child.exitCode,0,'shutdown reaches the native host before its input closes');
+        assert.deepStrictEqual(JSON.parse(fs.readFileSync(received,'utf8')),[{ui:{shown:true,focused:true}},{button:'select'},{shutdown:true}]);
     }
     try {
         names.forEach(key=>delete process.env[key]);
-        ['engine.js','gpu.js'].forEach(file=>fs.copyFileSync(path.join(source,file),path.join(directory,file)));
+        fs.copyFileSync(path.join(source,'engine.js'),path.join(directory,'engine.js'));
         pack({'doodle-host':program(path.join(runtime,'original'),runtime),'native.so':'shared backend'},null,path.join(directory,'engine.pack'));
-        const Launcher=require(path.join(directory,'engine')).Engine;
+        const Launcher=require(path.join(directory,'engine')).Session;
         await run(Launcher);
         assert.strictEqual(fs.lstatSync(path.join(runtime,'doodle-host')).mode&0o777,0o755);
         assert.strictEqual(fs.lstatSync(path.join(runtime,'native.so')).mode&0o111,0);
-        fs.chmodSync(path.join(runtime,'doodle-host'),0o600);
-        await run(Launcher);
-        assert.strictEqual(fs.lstatSync(path.join(runtime,'doodle-host')).mode&0o777,0o755,'cached launches restore the native executable');
-
+        fs.chmodSync(path.join(runtime,'doodle-host'),0o600);await run(Launcher);
+        assert.strictEqual(fs.lstatSync(path.join(runtime,'doodle-host')).mode&0o777,0o755);
         const custom=path.join(directory,'custom-runtime'),wrapper=path.join(directory,'native-wrapper'),original=path.join(directory,'custom-original');
         fs.mkdirSync(custom);fs.writeFileSync(path.join(custom,'doodle-host'),'unexecuted source binary');fs.chmodSync(path.join(custom,'doodle-host'),0o600);
         fs.writeFileSync(wrapper,program(original,custom));fs.chmodSync(wrapper,0o700);
-        process.env.DOODLE_ENGINE=custom;process.env.DOODLE_HOST=wrapper;process.env.DOODLE_ORIGINAL=original;
-        await run(Launcher);
-        assert.strictEqual(fs.statSync(wrapper).mode&0o777,0o700,'external launchers retain their permissions');
-        assert.strictEqual(fs.statSync(path.join(custom,'doodle-host')).mode&0o777,0o600,'custom runtime files are not chmodded');
+        process.env.DOODLE_ENGINE=custom;process.env.DOODLE_HOST=wrapper;process.env.DOODLE_ORIGINAL=original;await run(Launcher);
+        assert.strictEqual(fs.statSync(wrapper).mode&0o777,0o700);
+        assert.strictEqual(fs.statSync(path.join(custom,'doodle-host')).mode&0o777,0o600);
     } finally {
-        names.forEach(key=>{if(environment[key]===undefined)delete process.env[key];else process.env[key]=environment[key];});
+        names.forEach(key=>{if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];});
         remove(directory);
     }
 }
-nativeLaunches().then(()=>console.log('Precompiled host extraction, real process protocol, cached restart and development launcher: passed'))
+nativeLaunches().then(()=>console.log('Precompiled session extraction, real process protocol, cached restart and graceful shutdown: passed'))
     .catch(error=>{console.error(error);process.exitCode=1;});

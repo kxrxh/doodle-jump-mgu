@@ -20,7 +20,6 @@ RUST_COMPONENTS = {
     'clippy': '0d18df3bff6c852ef8243727fed075ecb33dbf93b8ab8c138c2f45e3f270102a',
     'rustfmt': '4c9389e4722b16499e5d47d89837ec84a4ef755f105ed2a84c038156064e01ab',
 }
-WASM_SHA256 = 'd445186ec34d19af8f884f242648f75b405eb79071dabc9e831512ba0475381a'
 MEDIA_URL = 'https://files.pythonhosted.org/packages/d8/d5/e5439dc08561f73656bfeb3340fc64ab63163e101426593d8fb9a025ff1e/miniaudio-1.71.tar.gz'
 MEDIA_SHA256 = 'ff51e2887bb673e2e757752b586b3dc924d59aa5fbcae9bbc45f4a111bd3262b'
 MEDIA = ROOT / 'runtime/data/host-media'
@@ -73,30 +72,14 @@ def prepare_toolchain():
     return TOOLCHAIN
 
 
-def prepare_wasm():
-    target = 'wasm32v1-none'
-    if any((TOOLCHAIN / 'lib/rustlib' / target / 'lib').glob('libcore-*.rlib')):
-        return
-    filename = f'rust-std-{VERSION}-{target}'
-    archive = download(f'https://static.rust-lang.org/dist/{filename}.tar.xz', WASM_SHA256,
-                       CACHE / 'downloads' / f'{filename}.tar.xz')
-    with tarfile.open(archive) as package:
-        package.extractall(CACHE, filter='data')
-    subprocess.run(docker(f'/work/.cache/rust-host/{filename}/install.sh',
-                          '--prefix=/work/.cache/rust-host/toolchain', '--disable-ldconfig'), check=True)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--command', choices=('build', 'test', 'clippy', 'fmt'), default='build')
     parser.add_argument('--setup-only', action='store_true')
-    parser.add_argument('--wasm', action='store_true', help='also install the browser core target')
     args = parser.parse_args()
     prepare_media()
     prepare_toolchain()
     prepare_certificates()
-    if args.wasm:
-        prepare_wasm()
     if args.setup_only:
         return
     native = ROOT / 'runtime/bundle'
