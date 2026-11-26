@@ -11,7 +11,7 @@ Play Doodle Jump on iDrive 7 (MGU), with all themes and sounds.
 2. Select **Releases**.
 3. Install **Doodle Jump**.
 
-Store installs Python and GPU support automatically. Restart the MGU if prompted.
+Store installs GPU support automatically. Restart the MGU if prompted.
 To update, refresh the repository in Store and install the latest release.
 
 ## Controls

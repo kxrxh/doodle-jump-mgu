@@ -23,12 +23,14 @@ Revision: 96ce1f488f1aa289d87a07627df70c51fe94dae5
 See runtime/LICENSE (shipped as LICENSE in the engine runtime) for its required
 copyright and permission notice.
 
-The host uses mgu-store's CPython 3.12 (Python Software Foundation License).
-Its private runtime includes pyelftools (public domain),
-Pillow (MIT-CMU and included third-party notices), miniaudio (MIT), cffi and
-pycparser (MIT). Their original license files remain inside each installed package;
-mgu-python provides CPython's license files. The MGU toolkit retains its existing
-license notices.
+The native host and WebAssembly controls/scenery are written in Rust. Rust and
+its standard library are distributed under MIT/Apache-2.0; their notices and
+those of the linked crates are retained in the runtime licenses directory.
+Audio decoding and playback use miniaudio 0.11.25 from miniaudio-python 1.71
+(MIT), including its bundled decoder notices. Image resampling follows Pillow's
+algorithms (MIT-CMU); see runtime/licenses/Pillow.txt. The MGU toolkit retains
+its existing license notices. Python, Pillow and Unicorn are development-only
+comparison tools and are not included in the production host.
 
 Unicorn is a development-only comparison backend, excluded from production
 packages. Its GPL-2.0 and included dependency notices remain in the development
@@ -51,7 +53,8 @@ host's _X font atlas and the original _L images for every theme. Included gamepl
 textures retain their original bytes, and all game sounds are retained.
 
 Peripheral scenery uses crops of the original gametiles_L.png and live bck_ paper;
-crop coordinates and paper projection are recorded in scenery.py. Wrapped source
+crop coordinates and paper projection are recorded in runtime/host/src/images.rs
+and runtime/ui/src/lib.rs. Wrapped source
 texels and the renderer's public linear filter preserve the repeating paper edges.
 The added app
 icon and cursor are separate new assets. Shipping PNG files retain their creation prompts in metadata.

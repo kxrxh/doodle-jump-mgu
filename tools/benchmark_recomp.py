@@ -13,7 +13,8 @@ import time
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, os.environ.get('DOODLE_ENGINE', str(ROOT / 'runtime')))
+from prepare_reference import activate
+activate(directory=os.environ.get('DOODLE_ENGINE'))
 from audio import Audio
 from game import Game, ORIGINAL
 
@@ -67,7 +68,7 @@ def benchmark(backend, theme, frames):
         if path.exists():
             cgroup[name] = path.read_text().strip()
     return dict(
-        scope='Uncapped engine, GPU commands and 48 kHz PCM; excludes GPU worker, compositor and physical MGU',
+        scope='Uncapped engine, GPU commands and 800 stereo PCM frames per update; excludes GPU worker, compositor and physical MGU',
         backend=backend, theme=theme, frames=frames, playing=playing, audible=audible,
         startupMs=(ready - started) * 1000, uncappedEngineFps=frames / elapsed,
         medianWorkMs=statistics.median(work), p95WorkMs=sorted(work)[int(frames * .95)],

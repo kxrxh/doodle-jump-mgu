@@ -1,124 +1,109 @@
 # Development
 
-Run commands from the repository root.
+Run commands from the repository root. Builds happen off-device; MGU runs the
+prebuilt x86-64 host and a small Rust/WASM module through Store's JavaScript SDK.
 
 | Directory | Contents |
 | --- | --- |
-| `apps/kxrxh_doodle_jump/` | MGU app, controls, and engine client |
-| `runtime/` | Python host, C++ backend, and runtime assets |
-| `runtime/recomp/` | ARM/Thumb translator, native guest bridge, and iparecomp provenance |
-| `native/doodle-gpu/` | Independent GPU presentation worker |
+| `apps/kxrxh_doodle_jump/` | Store launcher and renderer/socket adapters |
+| `runtime/host/` | Native Rust host: assets, JNI, audio and engine lifecycle |
+| `runtime/ui/` | Rust/WASM controls and side scenery |
+| `runtime/recomp/` | ARM-to-x86-64 translator and iparecomp provenance |
+| `runtime/*.cpp` | C++ drawing, mixer and frame encoding |
+| `native/doodle-gpu/` | Independent EGL/Wayland presentation worker |
 | `kit/` | MGU toolkit subset and browser emulator |
-| `tools/` | Build scripts and pinned dependencies |
-| `tests/` | App, runtime, and packaging tests |
+| `tools/`, `tests/` | Build, comparison and verification tools |
 
-Downloads, generated packages, and local previews are ignored by Git.
+Generated files, downloads and previews stay in ignored directories.
 
-## Build the app
+## Build or preview
 
-Requires Python 3, Node.js, and internet access.
+To package the pinned release runtime, install Python 3 and run:
 
 ```sh
 python3 tools/store_build.py kxrxh_doodle_jump
 ```
 
-This verifies the runtime pinned in `tools/runtime.json` and the original game
-files, then creates `dist/kxrxh_doodle_jump@<version>.tgz`.
-Store's Releases channel installs the ready package. Source installs use
-`mgu-repo.json` and software rendering unless GPU support is already installed.
+This verifies the runtime and original game downloads and creates
+`dist/kxrxh_doodle_jump@<version>.tgz`. Store installs that ready package.
 
-## Preview locally
-
-Requires Python 3.13, Node.js, clang, and a C++ compiler.
+For source development, install Python 3.12+, Node.js, Docker and clang, then run:
 
 ```sh
-./run-local.sh
+./run-local.sh 8079
 ```
 
-The script downloads the verified game files, creates `.venv`, installs runtime
-dependencies, and starts the browser preview. Pass a port as the first argument.
+The script prepares a development environment, builds the Linux host and WASM,
+and opens the browser emulator. The native host runs in Docker with a 512 MiB
+limit. No Python interpreter or compiler is required on the MGU.
 
-## Test
+## Rebuild and test
 
-After local preview setup, run the first-party tests and toolkit integration suite.
+After preview setup:
 
 ```sh
-PYTHONPATH=tools python3 -m unittest discover -s tests/tools -v
-PYTHONPATH=runtime .venv/bin/python -m unittest discover -s tests/runtime -v
+.venv/bin/python runtime/prepare.py
+.venv/bin/python tools/build_ui.py
+.venv/bin/python tools/build_host.py --command test
+.venv/bin/python tools/build_host.py --command clippy
+.venv/bin/python tools/build_ui.py --check
+PYTHONPATH=tools .venv/bin/python -m unittest discover -s tests/tools -v
 for suite in tests/runtime/test_*.js; do node "$suite" || exit 1; done
 node kit/tools/test_runtime.js
 ```
 
-## Rebuild runtime or GPU support
+The build scripts fetch a verified Rust SDK and miniaudio sources, compile against
+glibc 2.27, and produce `dist/runtime-linux-x86_64.pack`. Runtime packaging includes
+licenses and excludes Python, Unicorn, Cargo and build sources. Update the URL,
+size and SHA-256 in `tools/runtime.json` before packaging a new release.
 
-After runtime changes, build Linux x86-64 dependencies for Store's Python 3.12.
-Requires Python 3.13, Docker, clang, and the verified game files from local preview
-setup. Runtime preparation uses the cached engine; it does not download the game.
+The ARM library supplies original data; translated game logic runs as x86-64
+code in `recomp/game.so`. All 12 themes and original sound assets are retained.
 
-```sh
-.venv/bin/python -m pip install -r runtime/recomp/requirements.txt
-.venv/bin/python runtime/prepare.py
-```
+## Compare against the previous host
 
-This translates the pinned ARM engine with the adapted iparecomp emitter and
-builds `recomp/game.so` against glibc 2.27. `entries.json` supplies SHA-bound
-entry points observed in all 12 themes. Production packages contain no Unicorn.
-
-On Linux x86-64, verify the module against Unicorn and measure each backend with
-the same Python environment and machine:
+The Python host is an external, SHA-pinned v0.12.1 development oracle. Prepare it
+without maintaining a second host in this repository:
 
 ```sh
-cp runtime/bundle/recomp/game.so runtime/recomp/game.so
+.venv/bin/python tools/prepare_reference.py
 .venv/bin/python tools/prepare_unicorn.py
-export PYTHONPATH=runtime:runtime/data/oracle/site-packages
-.venv/bin/python -m unittest discover -s tests/recomp -v
-.venv/bin/python tools/benchmark_recomp.py --backend unicorn --theme 1
-.venv/bin/python tools/benchmark_recomp.py --backend aot --theme 1
 ```
 
-The benchmark reports uncapped engine FPS, frame times, peak process RSS, and an
-output checksum. It includes GPU command capture and sound mixing, and excludes
-the GPU worker, compositor, and physical MGU. Compare output checksums as well as
-timing; local results do not establish the car's frame rate. The patched development
-oracle is kept in `runtime/data/oracle/` and never copied into the production pack.
+Run these suites in Linux x86-64 with Store's CPython 3.12. Backend tests use the
+current C++ libraries; frozen-host tests use the immutable release. Run each suite
+in a separate Python process:
 
-Publish `dist/runtime-linux-x86_64.pack` and update `tools/runtime.json` with its
-URL, size, and SHA-256 before building the app.
+```sh
+python3 -m unittest discover -s tests/reference/backends -v
+python3 -m unittest discover -s tests/recomp -v
+python3 -m unittest discover -s tests/host -v
+python3 tools/compare_hosts.py --mode parity
+python3 tools/compare_hosts.py --mode benchmark --themes 1 10
+```
 
-To rebuild the GPU worker, use Docker and Python 3.
+Comparisons cover frame/texture commands, saves, audio events and decoded samples.
+Benchmarks report uncapped host throughput, frame times, startup and peak process
+RSS. They exclude the GPU worker and physical display, so they do not establish
+real MGU FPS. Use the packaged Node 8/EGL pipeline and real hardware to check
+presentation and frame pacing.
+
+## GPU support and publishing
 
 ```sh
 python3 tools/build_gpu_renderer.py
-```
-
-The worker presents through a Wayland/EGL surface on the game's existing
-compositor layer. It binds the layer through a temporary placement challenge
-and renderer peer credentials, using public IVI interfaces. Store owns the
-parent layer's visibility and input handling. The worker provides a VIDEO
-fallback when native presentation is unavailable. Its service and socket
-belong to `doodle-gpu`. The build creates
-the worker package and corresponding sources in `dist/`; Store installs it with
-the game. Upgrading an older GPU add-on removes its renderer override. Restart
-when Store asks to complete that migration.
-
-Run the worker's native integration tests with Mesa before publishing.
-
-```sh
 make -C native/doodle-gpu test
 ```
 
-For browser renderer rebuilds, see [the toolkit notes](../kit/README.md).
+The worker uses public Wayland/IVI interfaces and the game's compositor layer;
+Store keeps ownership of visibility and input. A VIDEO fallback handles systems
+without native presentation. No shared renderer override is installed.
 
-## Publish
+Upload app/runtime artifacts to a versioned GitHub Release. Update `catalog.json`
+with the verified artifact URL, size and SHA-256, then replace the `catalog`
+release's catalog. Retain required licenses and corresponding GPU worker sources.
+Keep BMW's SDK out of packages.
 
-Upload the app package to a versioned GitHub Release. Update `catalog.json`
-with its URL, size, and SHA-256, then replace the `catalog` release's catalog.
-Retain licenses and corresponding sources. Keep BMW's SDK out of packages.
-
-## Troubleshoot performance
-
-Enable **Show FPS** in the app. **Game** measures completed engine frames and
-**Render** measures renderer frames. **Native** counts compositor frame
-callbacks. **Video** uses the shared video transport, and **CPU** uses software
-rasterization. In CPU mode, the last line explains why GPU drawing is unavailable.
-After a screen interruption, **Last** shows the most recent display event.
+For performance diagnosis, enable **Show FPS**. **Game** measures completed engine
+frames; **Render** measures renderer frames; **Native** counts compositor callbacks.
+**CPU** shows why GPU drawing is unavailable, and **Last** records display events.

@@ -60,14 +60,14 @@ function remove(directory) {
     });
     fs.rmdirSync(directory);
 }
-function pack(files, editIndex) {
+function pack(files, editIndex, output) {
     const parts=[], index={files:{}};
     let offset=0;
     Object.keys(files).forEach(name=>{const data=zlib.deflateRawSync(Buffer.from(files[name]));index.files[name]=[offset,data.length];offset+=data.length;parts.push(data);});
     if(editIndex)editIndex(index);
     const meta=zlib.deflateRawSync(Buffer.from(JSON.stringify(index)));
     const header=Buffer.alloc(12);header.write('MGUPACK1');header.writeUInt32LE(meta.length,8);
-    const file=path.join(dir,'engine.pack');fs.writeFileSync(file,Buffer.concat([header,meta].concat(parts)));return file;
+    const file=output||path.join(dir,'engine.pack');fs.writeFileSync(file,Buffer.concat([header,meta].concat(parts)));return file;
 }
 try {
     const out=path.join(dir,'output');
@@ -103,12 +103,11 @@ try {
     assert.strictEqual(fs.readFileSync(path.join(out,'assets/sound.ogg'),'utf8'),'sound');
     assert.strictEqual(fs.readFileSync(path.join(out,'cache-hit'),'utf8'),'retained','cache hits do not extract again');
 
-    unpack(pack({'site-packages/dependency.py':'dependency','a/b/data':'original'}),out);
+    unpack(pack({'native.so':'dependency','a/b/data':'original'}),out);
     assert.strictEqual(fs.readFileSync(path.join(out,'a/b/data'),'utf8'),'original');
-    assert(!fs.existsSync(path.join(out,'python')),'the runtime uses Store Python');
     fs.writeFileSync(path.join(dir,'scores'),'saved score');
     fs.writeFileSync(path.join(out,'a/b/obsolete'),'old runtime');
-    unpack(pack({'site-packages/dependency.py':'updated','a/data':'new runtime'}),out);
+    unpack(pack({'native.so':'updated','a/data':'new runtime'}),out);
     assert(!fs.existsSync(path.join(out,'a/b/obsolete')),'updating removes obsolete runtime files');
     assert.strictEqual(fs.readFileSync(path.join(dir,'scores'),'utf8'),'saved score','game saves outside the runtime survive');
     assert.throws(()=>unpack(pack({'../outside':'bad'}),out),/Unsafe/);
@@ -128,6 +127,18 @@ try {
     assert.strictEqual(fs.readFileSync(path.join(out,'cache-hit'),'utf8'),'retained','a matching cache is not extracted again');
     const alias=path.join(dir,'cache-link');fs.symlinkSync(out,alias,'dir');
     assert.throws(()=>unpack(cached,alias),/Unsafe/,'a cache marker must not make a symlink root acceptable');
+
+    const nativePack=pack({'doodle-host':'prebuilt native host','native.so':'shared backend'});
+    unpack(nativePack,out);
+    const executable=path.join(out,'doodle-host'),library=path.join(out,'native.so');
+    assert.strictEqual(fs.lstatSync(executable).mode&0o777,0o755,'the unpacked native host is executable');
+    assert.strictEqual(fs.lstatSync(library).mode&0o111,0,'data and shared libraries do not become executable');
+    fs.chmodSync(executable,0o600);unpack(nativePack,out);
+    assert.strictEqual(fs.lstatSync(executable).mode&0o777,0o755,'cache hits restore executable permissions');
+    const outside=path.join(dir,'outside-host');fs.writeFileSync(outside,'outside');fs.chmodSync(outside,0o600);
+    fs.unlinkSync(executable);fs.symlinkSync(outside,executable);
+    assert.throws(()=>unpack(nativePack,out),/unsafe|executable|host/i,'cached symlinks cannot change another file permissions');
+    assert.strictEqual(fs.statSync(outside).mode&0o777,0o600);
 
     const partial=pack({'a/data':'short reads still restore these exact bytes'});
     try {
@@ -289,7 +300,8 @@ console.log('Region packet recycling across unchanged and fragmented frames: pas
 
 const childProcess=require('child_process'),EventEmitter=require('events');
 const savedSpawn=childProcess.spawn;
-const savedEnv={engine:process.env.DOODLE_ENGINE,python:process.env.DOODLE_PYTHON,path:process.env.PYTHONPATH};
+const envNames=['DOODLE_ENGINE','DOODLE_HOST','DOODLE_ORIGINAL','DOODLE_DATA','DOODLE_PYTHON','PYTHONPATH','PYTHONNOUSERSITE','PYTHONDONTWRITEBYTECODE'];
+const savedEnv={};envNames.forEach(key=>savedEnv[key]=process.env[key]);
 const local=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-launch-'));
 let launched;
 try {
@@ -302,15 +314,16 @@ try {
     };
     delete require.cache[require.resolve('../../apps/kxrxh_doodle_jump/engine')];
     const LaunchEngine=require('../../apps/kxrxh_doodle_jump/engine').Engine;
-    process.env.DOODLE_ENGINE=local;delete process.env.DOODLE_PYTHON;process.env.PYTHONPATH='/unrelated/modules';
+    process.env.DOODLE_ENGINE=local;delete process.env.DOODLE_HOST;delete process.env.DOODLE_ORIGINAL;delete process.env.DOODLE_DATA;
+    process.env.DOODLE_PYTHON='/obsolete/python';process.env.PYTHONPATH='/unrelated/modules';process.env.PYTHONNOUSERSITE='1';process.env.PYTHONDONTWRITEBYTECODE='1';
     const launchedEngine=new LaunchEngine('/game-data',{info(){},error(){}});
     launchedEngine.start();
-    assert.strictEqual(launched.command,'/var/opt/mgu-python/current/bin/python3','uses the Store interpreter');
-    assert.strictEqual(launched.options.env.PYTHONPATH,path.join(local,'site-packages'),'private dependencies reach Store Python');
-    assert.strictEqual(launched.options.env.PYTHONNOUSERSITE,'1');
+    assert.strictEqual(launched.command,path.join(local,'doodle-host'),'runs the precompiled native host');
+    for(const key of ['DOODLE_PYTHON','PYTHONPATH','PYTHONNOUSERSITE','PYTHONDONTWRITEBYTECODE'])
+        assert.strictEqual(launched.options.env[key],undefined,'native launch excludes '+key);
     assert.strictEqual(launched.options.env.MALLOC_MMAP_THRESHOLD_,'1048576','large engine temporaries return to the OS after use');
     assert.strictEqual(process.env.PYTHONPATH,'/unrelated/modules','launch does not change the parent environment');
-    assert.deepStrictEqual(launched.args,[path.join(local,'engine_process.py'),'--data','/game-data/game']);
+    assert.deepStrictEqual(launched.args,['--data','/game-data/game','--original',path.join(local,'original'),'--runtime',local]);
     const delivered=[];
     launchedEngine.onFrame=(pixels)=>delivered.push(pixels);
     for(const size of [[408,720],[408,720],[408,720],[544,960],[408,720]]) {
@@ -325,14 +338,93 @@ try {
     assert.strictEqual(delivered[3][0],4,'changing dimensions preserves the published large frame');
     assert.strictEqual(delivered[4].length,408*720*4);
     assert.strictEqual(delivered[4][delivered[4].length-1],5);
-    process.env.DOODLE_PYTHON='/local/python';
+    process.env.DOODLE_HOST='/local/native-wrapper';process.env.DOODLE_ORIGINAL='/local/original';
     new LaunchEngine('/game-data',{info(){},error(){}}).start();
-    assert.strictEqual(launched.command,'/local/python','local emulator interpreter override still works');
+    assert.strictEqual(launched.command,'/local/native-wrapper','the local preview can launch a native Docker wrapper');
+    assert.deepStrictEqual(launched.args,['--data','/game-data/game','--original','/local/original','--runtime',local]);
 } finally {
     childProcess.spawn=savedSpawn;
-    for(const pair of [['DOODLE_ENGINE',savedEnv.engine],['DOODLE_PYTHON',savedEnv.python],['PYTHONPATH',savedEnv.path]]) {
-        if(pair[1]===undefined)delete process.env[pair[0]];else process.env[pair[0]]=pair[1];
-    }
+    for(const key of envNames) { if(savedEnv[key]===undefined)delete process.env[key];else process.env[key]=savedEnv[key]; }
     remove(local);
 }
-console.log('Store Python and private runtime dependency launch: passed');
+console.log('Native host launch, development overrides and frame recycling: passed');
+
+async function nativeLaunches() {
+    const directory=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-native-launch-'));
+    const source=path.resolve(__dirname,'../../apps/kxrxh_doodle_jump');
+    const dataDir=path.join(directory,'saved-game'),runtime=path.join(dataDir,'engine');
+    const names=['DOODLE_ENGINE','DOODLE_HOST','DOODLE_ORIGINAL','DOODLE_DATA','DOODLE_PYTHON','PYTHONPATH','PYTHONNOUSERSITE','PYTHONDONTWRITEBYTECODE'];
+    const environment={};names.forEach(key=>environment[key]=process.env[key]);
+    function program(original,runtime) {
+        const arguments_=['--data',path.join(dataDir,'game'),'--original',original,'--runtime',runtime];
+        return '#!'+process.execPath+'\n'+
+            "'use strict';const assert=require('assert');assert.deepStrictEqual(process.argv.slice(2),"+JSON.stringify(arguments_)+");"+
+            "for(const key of ['DOODLE_PYTHON','PYTHONPATH','PYTHONNOUSERSITE','PYTHONDONTWRITEBYTECODE'])assert.strictEqual(process.env[key],undefined);"+
+            "function packet(kind,body){const h=Buffer.alloc(8);h.write(kind);h.writeUInt32LE(body.length,4);return Buffer.concat([h,body]);}"+
+            "const ready=packet('EVT1',Buffer.from(JSON.stringify({type:'ready'})));process.stdout.write(ready.slice(0,3));"+
+            "setImmediate(()=>process.stdout.write(ready.slice(3)));let input='';"+
+            "process.stdin.on('data',bytes=>{input+=bytes;let n;while((n=input.indexOf('\\n'))>=0){const command=JSON.parse(input.slice(0,n));input=input.slice(n+1);"+
+            "assert.strictEqual(command.frame,true);assert.strictEqual(command.gpu,false);assert.strictEqual(command.tilt,.25);"+
+            "process.stdout.write(packet('EVT1',Buffer.from(JSON.stringify({type:'playing',value:true}))));"+
+            "const frame=Buffer.alloc(8+408*720*4,17);frame.writeUInt32LE(408,0);frame.writeUInt32LE(720,4);process.stdout.write(packet('FRM1',frame));}});\n";
+    }
+    async function run(Launcher) {
+        const errors=[],engine=new Launcher(dataDir,{info(){},error(message){errors.push(message);}});
+        let timer,child;
+        try {
+            await new Promise((resolve,reject)=>{
+                timer=setTimeout(()=>reject(new Error('Native host handshake timed out: '+errors.join('; '))),5000);
+                engine.onError=reject;
+                engine.onFrame=(pixels,w,h)=>{
+                    try {
+                        assert.strictEqual(engine.busy,false);
+                        assert.strictEqual(engine.playing,true);
+                        assert.strictEqual(w,408);assert.strictEqual(h,720);
+                        assert.deepStrictEqual(pixels,Buffer.alloc(408*720*4,17));
+                        resolve();
+                    } catch(error) { reject(error); }
+                };
+                engine.start();child=engine.child;
+                let sent=false;
+                child.stdout.on('data',()=>{
+                    if(engine.ready&&!sent) {
+                        sent=true;
+                        assert.strictEqual(engine.frame({gpu:false,tilt:.25}),true);
+                    }
+                });
+            });
+        } finally {
+            clearTimeout(timer);
+            engine.stop();
+            if(child&&child.exitCode===null)await new Promise(resolve=>child.once('exit',resolve));
+        }
+    }
+    try {
+        names.forEach(key=>delete process.env[key]);
+        process.env.DOODLE_PYTHON='/obsolete/interpreter';process.env.PYTHONPATH='/unrelated/modules';
+        process.env.PYTHONNOUSERSITE='1';process.env.PYTHONDONTWRITEBYTECODE='1';
+        ['engine.js','gpu.js'].forEach(file=>fs.copyFileSync(path.join(source,file),path.join(directory,file)));
+        pack({'doodle-host':program(path.join(runtime,'original'),runtime),'native.so':'shared backend'},null,path.join(directory,'engine.pack'));
+        const Launcher=require(path.join(directory,'engine')).Engine;
+        await run(Launcher);
+        assert.strictEqual(fs.lstatSync(path.join(runtime,'doodle-host')).mode&0o777,0o755);
+        assert.strictEqual(fs.lstatSync(path.join(runtime,'native.so')).mode&0o111,0);
+        fs.chmodSync(path.join(runtime,'doodle-host'),0o600);
+        await run(Launcher);
+        assert.strictEqual(fs.lstatSync(path.join(runtime,'doodle-host')).mode&0o777,0o755,'cached launches restore the native executable');
+
+        const custom=path.join(directory,'custom-runtime'),wrapper=path.join(directory,'native-wrapper'),original=path.join(directory,'custom-original');
+        fs.mkdirSync(custom);fs.writeFileSync(path.join(custom,'doodle-host'),'unexecuted source binary');fs.chmodSync(path.join(custom,'doodle-host'),0o600);
+        fs.writeFileSync(wrapper,program(original,custom));fs.chmodSync(wrapper,0o700);
+        process.env.DOODLE_ENGINE=custom;process.env.DOODLE_HOST=wrapper;process.env.DOODLE_ORIGINAL=original;
+        await run(Launcher);
+        assert.strictEqual(fs.statSync(wrapper).mode&0o777,0o700,'external launchers retain their permissions');
+        assert.strictEqual(fs.statSync(path.join(custom,'doodle-host')).mode&0o777,0o600,'custom runtime files are not chmodded');
+        assert.strictEqual(process.env.PYTHONPATH,'/unrelated/modules','native launch preserves the parent environment');
+    } finally {
+        names.forEach(key=>{if(environment[key]===undefined)delete process.env[key];else process.env[key]=environment[key];});
+        remove(directory);
+    }
+}
+nativeLaunches().then(()=>console.log('Precompiled host extraction, real process protocol, cached restart and development launcher: passed'))
+    .catch(error=>{console.error(error);process.exitCode=1;});

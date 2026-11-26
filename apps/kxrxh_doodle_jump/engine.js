@@ -117,6 +117,14 @@ function readPack(fd, buffer, position, length) {
     return buffer;
 }
 
+function restoreExecutable(directory) {
+    const file = path.join(directory, 'doodle-host');
+    let stat;
+    try { stat = fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    if (!stat.isFile()) throw new Error('Unsafe native host executable');
+    if ((stat.mode & 0o777) !== 0o755) fs.chmodSync(file, 0o755);
+}
+
 function unpack(file, directory) {
     const fd = fs.openSync(file, 'r');
     try {
@@ -131,10 +139,12 @@ function unpack(file, directory) {
             hash.update(readPack(fd, chunk, offset, n).slice(0, n));
         }
         const digest = hash.digest('hex');
+        let cached = false;
         try {
-            const cached = fs.lstatSync(marker);
-            if (cached.isFile() && cached.size === digest.length && fs.readFileSync(marker, 'utf8') === digest) return;
+            const stat = fs.lstatSync(marker);
+            cached = stat.isFile() && stat.size === digest.length && fs.readFileSync(marker, 'utf8') === digest;
         } catch (e) { /* first run */ }
+        if (cached) { restoreExecutable(root); return; }
         const header = readPack(fd, Buffer.allocUnsafe(12), 0, 12);
         if (header.toString('ascii', 0, 8) !== 'MGUPACK1') throw new Error('Invalid engine data pack');
         const length = header.readUInt32LE(8), base = 12 + length;
@@ -159,6 +169,7 @@ function unpack(file, directory) {
             readPack(fd, compressed, base + part[0], part[1]);
             fs.writeFileSync(destination, zlib.inflateRawSync(compressed.slice(0, part[1])));
         });
+        restoreExecutable(root);
         fs.writeFileSync(marker, digest);
     } finally { fs.closeSync(fd); }
 }
@@ -178,15 +189,16 @@ class Engine {
             directory = path.join(this.dataDir, 'engine');
             unpack(path.join(__dirname, 'engine.pack'), directory);
         }
-        const python = process.env.DOODLE_PYTHON || '/var/opt/mgu-python/current/bin/python3';
-        const args = [path.join(directory, 'engine_process.py'), '--data', process.env.DOODLE_DATA || path.join(this.dataDir, 'game')];
-        if (!process.env.DOODLE_ENGINE) args.push('--original', path.join(directory, 'original'));
+        directory = path.resolve(directory);
+        const executable = process.env.DOODLE_HOST || path.join(directory, 'doodle-host');
+        const original = process.env.DOODLE_ORIGINAL ? path.resolve(process.env.DOODLE_ORIGINAL) : path.join(directory, 'original');
+        const args = ['--data', process.env.DOODLE_DATA || path.join(this.dataDir, 'game'), '--original', original, '--runtime', directory];
         const env = Object.assign({}, process.env, {
-            PYTHONPATH: path.join(directory, 'site-packages'), PYTHONNOUSERSITE: '1', PYTHONDONTWRITEBYTECODE: '1',
             // Bound glibc's retained heap after large image and audio temporaries are freed.
             MALLOC_MMAP_THRESHOLD_: '1048576',
         });
-        const child = this.child = spawn(python, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'] });
+        ['DOODLE_PYTHON', 'PYTHONPATH', 'PYTHONNOUSERSITE', 'PYTHONDONTWRITEBYTECODE'].forEach(key => delete env[key]);
+        const child = this.child = spawn(executable, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'] });
         const reader = new PacketReader((type, body) => this.packet(type,body), true);
         child.stdout.on('data', (chunk) => { try { reader.feed(chunk); } catch (e) { this.fail(e); } });
         let pending = '';

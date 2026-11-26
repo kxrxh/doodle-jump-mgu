@@ -1,18 +1,5 @@
-site-packages/bin/*
-# Game text uses its PNG atlas, with no AVIF, WebP, color management or TrueType calls.
-site-packages/PIL/_avif*
-site-packages/PIL/_webp*
-site-packages/PIL/_imagingcms*
-site-packages/PIL/_imagingft*
-site-packages/PIL/_imagingtk*
-site-packages/pillow.libs/libavif*
-site-packages/pillow.libs/libwebp*
-site-packages/pillow.libs/libsharpyuv*
-site-packages/pillow.libs/liblcms2*
-site-packages/pillow.libs/libfreetype*
-site-packages/pillow.libs/libharfbuzz*
-site-packages/pillow.libs/libbrotli*
-site-packages/pillow.libs/libpng16*
-*/__pycache__/*
+*.py
 *.pyc
+*/__pycache__/*
+site-packages/*
 original/*

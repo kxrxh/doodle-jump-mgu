@@ -1,4 +1,10 @@
 """Recover native entry points from the original Android ELF, without guessing data is code."""
+from pathlib import Path as _Path
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / 'tools'))
+from prepare_reference import activate as _activate
+_REFERENCE = _activate()
+
 from pathlib import Path
 import sys
 import hashlib

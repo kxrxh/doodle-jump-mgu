@@ -1,4 +1,10 @@
 """Exercise the AOT guest bridge with generated C and the existing host dispatcher."""
+from pathlib import Path as _Path
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / 'tools'))
+from prepare_reference import activate as _activate
+_REFERENCE = _activate()
+
 import ctypes as C
 import importlib.util
 from pathlib import Path
@@ -347,7 +353,7 @@ class GuestTests(unittest.TestCase):
         self.assertEqual(self.get(R0), 999)
 
     def test_machine_round_trips_full_neon_register_without_overrunning_ctypes_buffers(self):
-        specification = importlib.util.spec_from_file_location('guest_machine_fixture', RECOMP / 'machine.py')
+        specification = importlib.util.spec_from_file_location('guest_machine_fixture', _REFERENCE / 'recomp/machine.py')
         module = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(module)
         self.lib.guest_context.argtypes = [C.c_void_p]

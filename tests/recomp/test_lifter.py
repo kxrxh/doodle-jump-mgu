@@ -1,4 +1,10 @@
 """Compare emitted ARM/Thumb C with Unicorn on assembled instruction fixtures."""
+from pathlib import Path as _Path
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / 'tools'))
+from prepare_reference import activate as _activate
+_REFERENCE = _activate()
+
 import ctypes
 from pathlib import Path
 import random

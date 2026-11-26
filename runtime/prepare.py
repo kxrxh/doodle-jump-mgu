@@ -1,31 +1,114 @@
-"""Build the Linux x86-64 game module and private Python 3.12 dependencies."""
+"""Build and package the precompiled Linux x86-64 game and native Rust host."""
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
-ROOT=Path(__file__).resolve().parent
-BUNDLE=ROOT/'bundle'
-IMAGE='ubuntu:18.04@sha256:152dc042452c496007f07ca9127571cb9c29697f42acbfad72324b2bb2e43c98'
+ROOT = Path(__file__).resolve().parent
+PROJECT = ROOT.parent
+BUNDLE = ROOT / 'bundle'
+IMAGE = 'ubuntu:18.04@sha256:152dc042452c496007f07ca9127571cb9c29697f42acbfad72324b2bb2e43c98'
+HOST = PROJECT / '.cache/rust-host/target/release/doodle-host'
+
+
+def check_native(path):
+    binary = path.read_bytes()
+    if binary[:6] != b'\x7fELF\x02\x01' or binary[18:20] != b'\x3e\x00':
+        raise ValueError(f'Expected Linux x86-64 native code: {path}')
+
+
+def licenses(destination):
+    shutil.copytree(ROOT / 'licenses', destination)
+    media = ROOT / 'data/host-media/miniaudio-1.71/LICENSE'
+    shutil.copy2(media, destination / 'miniaudio.txt')
+    rust = PROJECT / '.cache/rust-host/toolchain/share/doc/rust'
+    standard = destination / 'rust-std'
+    standard.mkdir()
+    shutil.copy2(rust / 'COPYRIGHT-library.html', standard)
+    shutil.copytree(rust / 'licenses', standard / 'licenses')
+    sys.path.insert(0, str(PROJECT / 'tools'))
+    from build_host import prepare_certificates
+    prepare_certificates()
+    environment = [
+        '-e', 'PATH=/work/.cache/rust-host/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        '-e', 'CARGO_HOME=/work/.cache/rust-host/cargo',
+        '-e', 'CARGO_HTTP_CAINFO=/work/.cache/rust-host/cacert.pem',
+    ]
+    metadata = subprocess.run(['docker', 'run', '--rm', '--platform', 'linux/amd64',
+        '-v', f'{PROJECT}:/work', '-w', '/work/runtime/host', *environment,
+        'doodle-recomp-target', 'cargo', 'metadata', '--locked', '--format-version', '1'],
+        stdout=subprocess.PIPE, text=True, check=True)
+    packages = json.loads(metadata.stdout)['packages']
+    notices = []
+    for package in packages:
+        if package['source'] is None:
+            continue
+        source = PROJECT / Path(package['manifest_path']).relative_to('/work').parent
+        target = destination / 'rust-crates' / f'{package["name"]}-{package["version"]}'
+        files = sorted(path for path in source.rglob('*') if path.is_file() and
+                       path.name.lower().startswith(('license', 'copying', 'notice', 'copyright', 'unlicense')))
+        if not files:
+            raise ValueError(f'Crate license notices are missing: {package["id"]}')
+        for path in files:
+            output = target / path.relative_to(source)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, output)
+        notices.append(dict(name=package['name'], version=package['version'],
+                            license=package['license'], source=package['source']))
+    (destination / 'rust-crates/manifest.json').write_text(json.dumps(notices, indent=2) + '\n')
+
+
+def pack_bundle(host=HOST):
+    """Compose a clean production pack using the already-built libraries and host."""
+    host = Path(host)
+    for path in (host, BUNDLE / 'native.so', BUNDLE / 'recomp/game.so'):
+        check_native(path)
+    (ROOT / 'data').mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='runtime-pack-', dir=ROOT / 'data') as temporary:
+        stage = Path(temporary) / 'bundle'
+        (stage / 'recomp').mkdir(parents=True)
+        shutil.copy2(host, stage / 'doodle-host')
+        (stage / 'doodle-host').chmod(0o755)
+        shutil.copy2(BUNDLE / 'native.so', stage)
+        shutil.copy2(BUNDLE / 'recomp/game.so', stage / 'recomp')
+        shutil.copy2(ROOT / 'arm_helpers.o', stage)
+        shutil.copy2(ROOT / 'LICENSE', stage)
+        shutil.copy2(PROJECT / 'NOTICE', stage)
+        for name in ('LICENSE', 'upstream.json'):
+            shutil.copy2(ROOT / 'recomp' / name, stage / 'recomp' / name)
+        (stage / 'assets').mkdir()
+        shutil.copy2(ROOT / 'assets/cursor.png', stage / 'assets/cursor.png')
+        licenses(stage / 'licenses')
+        shutil.copy2(ROOT / 'bundle.packignore', stage / '.packignore')
+        # Staging retains the libraries before replacing the old Python bundle.
+        shutil.rmtree(BUNDLE)
+        stage.rename(BUNDLE)
+    spec = importlib.util.spec_from_file_location('pack_data', PROJECT / 'kit/tools/pack_data.py')
+    pack_data = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pack_data)
+    pack_data.SPLIT = 1 << 60
+    output = PROJECT / 'dist/runtime-linux-x86_64.pack'
+    output.parent.mkdir(exist_ok=True)
+    raw, size, count = pack_data.pack(str(BUNDLE), str(output))
+    print(f'{output.name}: {count} files, {raw/1e6:.1f} MB extracted, {size/1e6:.1f} MB packed')
+    return output
+
 
 def main():
-    original=ROOT.parent/'original/extracted/lib/armeabi-v7a/libDoodleJump.so'
+    original = PROJECT / 'original/extracted/lib/armeabi-v7a/libDoodleJump.so'
     if not original.is_file():
         raise SystemExit('Verified game engine missing; run python3 tools/get_original.py first')
-    generated=ROOT/'data/recomp-build'
-    shutil.rmtree(generated,ignore_errors=True)
-    subprocess.run([sys.executable,str(ROOT.parent/'tools/recompile.py'),'--report',
-        '--original',str(original),'--output',str(generated)],check=True)
-    shutil.rmtree(BUNDLE,ignore_errors=True)
-    BUNDLE.mkdir()
-    (BUNDLE/'recomp').mkdir()
-    subprocess.run([sys.executable,'-m','pip','install','--no-compile','--only-binary=:all:',
-        '--platform','manylinux_2_27_x86_64','--platform','manylinux_2_24_x86_64',
-        '--platform','manylinux2014_x86_64','--implementation','cp','--python-version','3.12',
-        '--abi','cp312','--target',str(BUNDLE/'site-packages'),'-r',str(ROOT/'requirements.txt')],check=True)
-    command=['docker','run','--rm','--platform','linux/amd64','-v',f'{ROOT}:/work','-w','/work',IMAGE]
-    # Build against the MGU's glibc 2.27; newer Linux toolchains can require glibc 2.34.
+    generated = ROOT / 'data/recomp-build'
+    shutil.rmtree(generated, ignore_errors=True)
+    subprocess.run([sys.executable, str(PROJECT / 'tools/recompile.py'), '--report',
+                    '--original', str(original), '--output', str(generated)], check=True)
+    shutil.rmtree(BUNDLE, ignore_errors=True)
+    (BUNDLE / 'recomp').mkdir(parents=True)
+    command = ['docker', 'run', '--rm', '--platform', 'linux/amd64',
+               '-v', f'{ROOT}:/work', '-w', '/work', IMAGE]
     subprocess.run(command+['bash','-ec',r'''
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -46,32 +129,9 @@ g++ -std=c++14 -fPIC -fexceptions -fno-strict-aliasing -ffp-contract=off -O2 \
 g++ -shared -static-libstdc++ -static-libgcc data/recomp-build/*.o -lm -o bundle/recomp/game.so
 strip --strip-unneeded bundle/recomp/game.so
 '''],check=True)
-    for path in (BUNDLE/'native.so',BUNDLE/'recomp/game.so'):
-        library=path.read_bytes()
-        assert library[:5]==b'\x7fELF\x02' and library[18:20]==b'\x3e\x00','Expected a Linux x86-64 library'
-    for name in ('arm','libc','jni','gles','game','input_state','engine_process','commerce','audio','png_decoder','scenery','native_backend','frame_encoder'):
-        shutil.copy2(ROOT/f'{name}.py',BUNDLE)
-    for name in ('arm_helpers.S','arm_helpers.o','raster.c','texture.h','dispatch.cpp','dispatch.h','image_memory.cpp','image_memory.h','graphics.cpp','audio.cpp','frame.cpp','raster_parallel.cpp','prepare.py','LICENSE'):
-        shutil.copy2(ROOT/name,BUNDLE)
-    for name in ('__init__.py','machine.py','LICENSE','upstream.json'):
-        shutil.copy2(ROOT/'recomp'/name,BUNDLE/'recomp'/name)
-    shutil.copy2(ROOT.parent/'NOTICE',BUNDLE/'NOTICE')
-    shutil.copytree(ROOT/'licenses',BUNDLE/'licenses')
-    (BUNDLE/'arm_helpers.o').touch()
-    (BUNDLE/'native.so').touch()
-    from native_backend import source_digest
-    (BUNDLE/'native.so.sha256').write_text(source_digest(BUNDLE)+'\n')
-    (BUNDLE/'assets').mkdir()
-    shutil.copy2(ROOT/'assets/cursor.png',BUNDLE/'assets/cursor.png')
-    shutil.copy2(ROOT/'bundle.packignore',BUNDLE/'.packignore')
-    spec=importlib.util.spec_from_file_location('pack_data',ROOT.parent/'kit/tools/pack_data.py')
-    pack_data=importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(pack_data)
-    pack_data.SPLIT=1<<60
-    output=ROOT.parent/'dist/runtime-linux-x86_64.pack'
-    output.parent.mkdir(exist_ok=True)
-    raw,size,count=pack_data.pack(str(BUNDLE),str(output))
-    print(f'{output.name}: {count} files, {raw/1e6:.1f} MB extracted, {size/1e6:.1f} MB packed')
+    subprocess.run([sys.executable, str(PROJECT / 'tools/build_host.py')], check=True)
+    pack_bundle()
 
 
-if __name__=='__main__':main()
+if __name__ == '__main__':
+    main()

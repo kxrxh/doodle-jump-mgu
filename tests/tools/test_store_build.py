@@ -31,7 +31,7 @@ class StoreBuildTests(unittest.TestCase):
         build=self.module()
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk';out=root/'engine.pack'
-            runtime_files={'engine_process.py':b'host','site-packages/elftools/__init__.py':b'ELF parser',
+            runtime_files={'doodle-host':b'prebuilt x86-64 host','native.so':b'native graphics and audio',
                            'recomp/game.so':b'x86-64 module','recomp/LICENSE':b'original MIT notice'}
             runtime.write_bytes(pack(runtime_files))
             kept={'assets/paper_L.png':b'paper','assets/fonts/doodlejumpfont_X.png':b'font',
@@ -75,7 +75,7 @@ class StoreBuildTests(unittest.TestCase):
         build=self.module()
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk'
-            runtime.write_bytes(pack({'engine_process.py':b'host'}))
+            runtime.write_bytes(pack({'doodle-host':b'prebuilt host'}))
             with zipfile.ZipFile(apk,'w') as archive:archive.writestr('assets/../../outside',b'bad')
             with self.assertRaisesRegex(ValueError,'path'):build.assemble(runtime,apk,root/'engine.pack')
             self.assertFalse((root.parent/'outside').exists())
