@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert');
-const { Controls } = require('../apps/kxrxh_doodle_jump/controls');
+const { Controls } = require('../../apps/kxrxh_doodle_jump/controls');
 let playing = false;
 const c = new Controls(() => playing);
 c.place = { w:1920,h:720,scale:1.164,ox:71,oy:-38 };

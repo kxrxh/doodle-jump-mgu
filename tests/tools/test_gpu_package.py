@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import patch
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 CHECK = ROOT / 'native/doodle-gpu/gpu_check.js'
 UPSTREAM = ROOT / '.cache/gpu-renderer-source'
 

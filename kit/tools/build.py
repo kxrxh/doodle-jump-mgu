@@ -2,7 +2,7 @@
 """MGU App Kit build: apps/<id>/app.json + main.js  ->  installable app.
 
     python3 kit/tools/build.py            # build every app in apps/
-    python3 kit/tools/build.py car_vitals # just one
+    python3 kit/tools/build.py kxrxh_doodle_jump
 
 Produces in dist/:
     <id>@<ver>.tgz   npm-format package (the platform's preinstalled_apps format)
@@ -10,7 +10,7 @@ Produces in dist/:
 
 The RHMI layout (application.xml + uiDescription.json) is GENERATED from the
 "screens" + "settings" in app.json, using only widget templates that BMW's own
-apps use on this firmware (see reference/rhmi-widget-cells.md).
+apps use on this firmware.
 """
 import gzip, json, os, re, shutil, sys, tarfile, tempfile, uuid
 from xml.sax.saxutils import escape

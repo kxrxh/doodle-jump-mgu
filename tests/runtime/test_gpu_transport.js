@@ -1,8 +1,8 @@
 'use strict';
 const assert = require('assert');
-const { Engine, PacketReader } = require('../apps/kxrxh_doodle_jump/engine');
-const record = require('../kit/runtime/record');
-const { RenderClient, SOCKETS } = require('../kit/runtime/renderd');
+const { Engine, PacketReader } = require('../../apps/kxrxh_doodle_jump/engine');
+const record = require('../../kit/runtime/record');
+const { RenderClient, SOCKETS } = require('../../kit/runtime/renderd');
 assert.deepStrictEqual(SOCKETS, process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] :
     ['/run/mgu-render/render.sock', '/run/mgu-renderd/renderd.sock'], 'prefer the socket checked by the Store GPU add-on');
 const TX = 0x4d520007, SCENE = 0x4d520008;
@@ -153,7 +153,7 @@ console.log('GPU driver failure fallback: passed');
 
 {
     const fs = require('fs'), path = require('path'), vm = require('vm'), EventEmitter = require('events');
-    const { Controls } = require('../apps/kxrxh_doodle_jump/controls');
+    const { Controls } = require('../../apps/kxrxh_doodle_jump/controls');
     let now = 1000, seq = 0, draw, focus, game, painting, visible = true, full = true;
     const timers = new Map(), requests = [], events = {};
     let showFps = false, paints = 0, kicks = 0, controllerInput, layoutChanged;
@@ -196,7 +196,7 @@ console.log('GPU driver failure fallback: passed');
         './kit/parked':{ watch() { return { moving() { return false; } }; } }, './engine':{ Engine:StubEngine },
         './kit/sheet':{ cardSheet() {} }, './world':{ World:class { draw() {} } }, './controls':{ Controls },
     };
-    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../apps/kxrxh_doodle_jump/main.js'), 'utf8'), {
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../apps/kxrxh_doodle_jump/main.js'), 'utf8'), {
         require(name) { return dependencies[name]; }, Date:{ now() { return now; } }, setTimeout:later,
         clearTimeout(id) { timers.delete(id); }, setInterval() { return ++seq; }, clearInterval() {},
         process:{ on(name, fn) { events[name] = fn; }, exit() {} },

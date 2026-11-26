@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('assert');
 let PacketReader;
-try { ({ PacketReader } = require('../apps/kxrxh_doodle_jump/engine')); }
+try { ({ PacketReader } = require('../../apps/kxrxh_doodle_jump/engine')); }
 catch (e) { assert.fail('The MGU original-engine packet reader is missing: ' + e.message); }
 const seen = [];
 const reader = new PacketReader((type, payload) => seen.push([type, Buffer.from(payload)]));
@@ -51,7 +51,7 @@ assert.deepStrictEqual(recycled[3],Buffer.alloc(16,4),'a resized successor prese
 assert.deepStrictEqual(persistent,[Buffer.alloc(16,99),Buffer.alloc(16,88)],'textures and events never enter the frame buffers');
 console.log('Optional two-frame recycling and retained packet ownership: passed');
 const fs=require('fs'),path=require('path'),os=require('os'),zlib=require('zlib');
-const {unpack}=require('../apps/kxrxh_doodle_jump/engine');
+const {unpack}=require('../../apps/kxrxh_doodle_jump/engine');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'doodle-pack-'));
 function remove(directory) {
     fs.readdirSync(directory).forEach(name=>{
@@ -155,7 +155,7 @@ try {
     assert.strictEqual(fs.readFileSync(path.join(out,'a/data'),'utf8'),'short reads still restore these exact bytes');
 } finally { remove(dir); }
 console.log('Engine pack extraction and traversal rejection: passed');
-const {Engine}=require('../apps/kxrxh_doodle_jump/engine');
+const {Engine}=require('../../apps/kxrxh_doodle_jump/engine');
 const engine=new Engine('',{info(){},error(){}}),textures=[];
 engine.onTexture=(id,w,h,pixels)=>textures.push([id,w,h,Array.from(pixels)]);
 const tex=Buffer.alloc(16);tex.writeUInt32LE(2,0);tex.writeUInt32LE(1,4);tex.writeUInt32LE(1,8);tex.set([1,2,3,255],12);
@@ -290,8 +290,8 @@ try {
         launched.child=child;
         return child;
     };
-    delete require.cache[require.resolve('../apps/kxrxh_doodle_jump/engine')];
-    const LaunchEngine=require('../apps/kxrxh_doodle_jump/engine').Engine;
+    delete require.cache[require.resolve('../../apps/kxrxh_doodle_jump/engine')];
+    const LaunchEngine=require('../../apps/kxrxh_doodle_jump/engine').Engine;
     process.env.DOODLE_ENGINE=local;delete process.env.DOODLE_PYTHON;process.env.PYTHONPATH='/unrelated/modules';
     const launchedEngine=new LaunchEngine('/game-data',{info(){},error(){}});
     launchedEngine.start();

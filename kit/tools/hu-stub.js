@@ -260,7 +260,7 @@ function liveSignals(hu) {
 
 /* ---------------- emu.js's app process ---------------- */
 
-// README section 7; a copy: must match SCALE in kit/runtime/car.js. app.json "config.scaling" overrides, as in car.js
+// Default scaling for manual vehicle signals; app.json "config.scaling" can override it.
 const SCALE = {
     rpm: { factor: 0.25, offset: 0 }, speed: { factor: 0.015625, offset: 0 }, accel: { factor: 0.002, offset: -65 },
     temp: { factor: 1, offset: -48 }, torque: { factor: 0.5, offset: -1023.5 },

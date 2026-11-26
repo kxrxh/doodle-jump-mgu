@@ -4,7 +4,7 @@ import struct
 import unittest
 
 
-LIBRARY = Path(__file__).resolve().parent.parent / 'original/extracted/lib/armeabi-v7a/libDoodleJump.so'
+LIBRARY = Path(__file__).resolve().parents[2] / 'original/extracted/lib/armeabi-v7a/libDoodleJump.so'
 
 
 class ArmTests(unittest.TestCase):

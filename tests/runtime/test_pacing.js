@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert'), fs = require('fs'), path = require('path'), vm = require('vm');
-const { Controls } = require('../apps/kxrxh_doodle_jump/controls');
+const { Controls } = require('../../apps/kxrxh_doodle_jump/controls');
 let now = 1000, sequence = 0, draw, focus, input, engine, sheet, moving = false, visible = true, focused = true;
 let replyDelay = null;
 const timers = new Map(), events = {}, clicks = {}, sent = [], requests = [];
@@ -41,7 +41,7 @@ const dependencies = {
     './engine':{ Engine }, './kit/sheet':{ cardSheet(options) { return options; } },
     './world':{ World:class { draw() {} } }, './controls':{ Controls },
 };
-function startApp() { vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../apps/kxrxh_doodle_jump/main.js'), 'utf8'), {
+function startApp() { vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../apps/kxrxh_doodle_jump/main.js'), 'utf8'), {
     require(name) { assert(dependencies[name], name); return dependencies[name]; },
     Date:{ now() { return now; } }, setTimeout:later, clearTimeout(id) { timers.delete(id); },
     setInterval() { return ++sequence; }, clearInterval() {},

@@ -1,23 +1,23 @@
 #!/bin/bash
-# build.sh - kit/renderd/src/gfx.c (unchanged) + emu_gfx.c -> kit/emu/web/gfx/mgu-gfx-wasm.{js,wasm}
-#
-# Needs Docker (the official Emscripten image, pinned; arm64 and x86-64). The output is committed, so the emulator
-# needs no Docker: run this again after a change to kit/renderd/src/gfx.c, dialect.c, proto.h or this folder.
-#   kit/emu/wasm/build.sh            EMSDK_IMAGE=emscripten/emsdk:<ver> to try another Emscripten
-# Emscripten's library cache: $EM_CACHE_DIR (default ~/.cache/mgu-emu-emcache), outside the repository.
+# Build the browser renderer with the upstream sources described in kit/README.md.
+# Emscripten's cache lives outside the repository and can be set with EM_CACHE_DIR.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 IMAGE=${EMSDK_IMAGE:-emscripten/emsdk:6.0.12}
 CACHE=${EM_CACHE_DIR:-$HOME/.cache/mgu-emu-emcache}
 OUT=kit/emu/web/gfx
-SRC=kit/renderd/src
+SRC=${MGU_RENDERD_SOURCE:-.cache/idrive7-apps/kit/renderd/src}
+if [ ! -f "$ROOT/$SRC/gfx.c" ]; then
+    printf '%s\n' 'Renderer sources missing. Follow kit/README.md to fetch the pinned source.' >&2
+    exit 1
+fi
 TMP=$OUT/.build-$$                    # the outputs replace the committed ones only when the build succeeds
 mkdir -p "$ROOT/$TMP" "$CACHE"
 trap 'rm -rf "$ROOT/$TMP"' EXIT
 docker run --rm -u "$(id -u):$(id -g)" -e EM_CACHE=/emcache -v "$CACHE:/emcache" -v "$ROOT:/src" -w /src "$IMAGE" \
     emcc -O3 -g0 -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -Werror \
-    -I$SRC kit/emu/wasm/emu_gfx.c $SRC/gfx.c $SRC/dialect.c $SRC/log.c \
+    -I"$SRC" kit/emu/wasm/emu_gfx.c "$SRC/gfx.c" "$SRC/dialect.c" "$SRC/log.c" \
     --js-library kit/emu/wasm/emu_lib.js \
     -sMODULARIZE -sEXPORT_ES6 -sEXPORT_NAME=createMguGfxWasm -sENVIRONMENT=web \
     -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 \
