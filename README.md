@@ -17,6 +17,8 @@ To update, refresh the source in Store and install the latest version.
 
 ## Controls
 
+Turn the iDrive ring one click for a small adjustment or several clicks for a wider jump. Press the ring to shoot.
+
 Touch controls work without extra tools. iDrive controller support depends on your setup.
 
 Enable **Show FPS** in the main menu to see how fast the game runs. The first word shows the drawing mode. If the screen blinks, look for **Last** to see the most recent display event. In CPU mode, the last line explains why GPU drawing is unavailable.
