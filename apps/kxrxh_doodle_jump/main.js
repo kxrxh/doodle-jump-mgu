@@ -75,7 +75,9 @@ mgu.run({
         }
         function updateGPU() {
             const display = ctx.display, gpu = display && display.gpu;
-            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && display.active('GAME'));
+            // A covered page can finish an in-flight GPU frame. Its renderer still owns the textures.
+            const retainedScene = !going && !shown() && gpu && gpu === gpuSource && gpu.generation === gpuGeneration;
+            const enabled = !!(gpu && gpu.ready && gpu.native && gpu.info && gpu.info.scenes && (retainedScene || display.active('GAME')));
             const source = enabled ? gpu : null, generation = enabled ? gpu.generation : 0;
             if (enabled === gpuEnabled && source === gpuSource && generation === gpuGeneration) return;
             gpuEnabled = enabled; gpuSource = source; gpuGeneration = generation;
@@ -182,6 +184,7 @@ mgu.run({
                 else if (renderer.info && renderer.info.shaderFailed) reason = 'GPU shader unavailable';
                 else reason = renderer.info && renderer.info.sceneFailed ? 'GPU scene rejected' : 'GPU scenes unavailable';
             }
+            if (!reason && ctx.display && ctx.display.lastInterruption) reason = 'Last | ' + ctx.display.lastInterruption;
             cv.fillRect(size / 2, size / 2, 18 * size, ((timed ? 3.5 : 2) + (reason ? 1.5 : 0)) * size, '#342b25');
             cv.text(label, size, 1.88 * size, size, '#ffffff', { literal: true });
             if (timed) cv.text('Engine ' + m.wall + ' | CPU ' + m.cpu + ' | Trip ' + m.trip + ' ms',

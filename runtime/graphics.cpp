@@ -46,6 +46,13 @@ template <int Kind, size_t Count> const uint32_t *lookup() {
 }
 using Matrix = std::array<double, 16>;
 using Vertex = std::array<double, 8>;
+bool misses_viewport(const Vertex &a, const Vertex &b, const Vertex &c, int w, int h) {
+    // Repeated endpoints join sprites in triangle strips. Keep thin triangles and every edge crossing.
+    if ((a[0] == b[0] && a[1] == b[1]) || (b[0] == c[0] && b[1] == c[1]) ||
+        (c[0] == a[0] && c[1] == a[1])) return true;
+    return (a[0] < 0 && b[0] < 0 && c[0] < 0) || (a[0] > w && b[0] > w && c[0] > w) ||
+           (a[1] < 0 && b[1] < 0 && c[1] < 0) || (a[1] > h && b[1] > h && c[1] > h);
+}
 const Matrix identity{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
 Matrix multiply(const Matrix &a, const Matrix &b) {
     Matrix out{};
@@ -449,12 +456,17 @@ struct Graphics {
         std::vector<float> data;
         data.reserve(triangles.size() * 8);
         const double scale_x = double(render_width) / width, scale_y = double(render_height) / height;
-        for (const auto &v : triangles) {
-            data.push_back(v[0] * scale_x);
-            data.push_back(v[1] * scale_y);
-            for (size_t i = 2; i < v.size(); ++i)
-                data.push_back(v[i]);
+        for (size_t i = 0; i < triangles.size(); i += 3) {
+            if (gpu_enabled && misses_viewport(triangles[i], triangles[i+1], triangles[i+2], width, height))
+                continue;
+            for (size_t j = i; j < i + 3; ++j) {
+                const auto &v = triangles[j];
+                data.push_back(v[0] * scale_x);
+                data.push_back(v[1] * scale_y);
+                data.insert(data.end(), v.begin() + 2, v.end());
+            }
         }
+        if (data.empty()) { ++draws; return; }
         auto param = [&](uint32_t name, uint32_t fallback) {
             return tex && tex->params.count(name) ? tex->params.at(name) : fallback;
         };
@@ -470,9 +482,15 @@ struct Graphics {
             gpu_word(gpu_commands, source);
             gpu_word(gpu_commands, destination);
             gpu_word(gpu_commands, replace);
-            gpu_word(gpu_commands, triangles.size());
-            for (float value : data)
-                gpu_float(gpu_commands, value);
+            gpu_word(gpu_commands, data.size() / 8);
+            if (!std::all_of(data.begin(), data.end(), [](float v) { return std::isfinite(v); }))
+                throw std::runtime_error("Nonfinite GPU scene value");
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            const auto *bytes = reinterpret_cast<const uint8_t *>(data.data());
+            gpu_commands.insert(gpu_commands.end(), bytes, bytes + data.size() * sizeof(float));
+#else
+            for (float value : data) gpu_float(gpu_commands, value);
+#endif
             ++draws;
             return;
         }

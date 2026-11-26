@@ -82,6 +82,7 @@ class Display {
     constructor(ui, log, spec, settings, themeFn) {
         this.ui = ui; this.log = log; this.spec = spec; this.settings = settings; this.theme = themeFn;
         this.gpu = null;
+        this.lastInterruption = '';
         this.state = null;                 // canvas screen shown by the renderer (first canvas screen)
         this.recorders = new Map();
         this.lastWords = null; this.lastSent = 0;
@@ -105,10 +106,19 @@ class Display {
             if (name === 'SETTINGS') { this._syncVisible(); if (!v) this._lost(); return; }
             if (name !== this.screen.name) return;
             if (v) this.barOff = 0;                   // the HMI builds the screen afresh
-            if (!v) this.closeSheet();
+            if (!v) {
+                if (this.shownT) this.lastInterruption = 'HMI page hidden';
+                this.shownT = 0;
+                this.closeSheet();
+            }
             this._syncVisible();
         });
-        if (this.ui.onFocus) this.ui.onFocus((name) => { if (name === this.screen.name) { this._syncVisible(); this._lost(); } });
+        if (this.ui.onFocus) this.ui.onFocus((name, focused) => {
+            if (name !== this.screen.name) return;
+            if (!focused && this.shownT) this.lastInterruption = 'HMI focus lost';
+            this._syncVisible(focused && this.shownT && this.screen.nativePixels);
+            this._lost();
+        });
         settings.onChange((k) => {
             if (k === 'layout' || k === 'renderer') this.closeSheet();
             if (k === 'layout') { this._place(); this.lastWords = null; }
@@ -164,13 +174,22 @@ class Display {
         const gpu = this.gpu = new RenderClient(this.spec.id, this.log, Object.assign({ native }, file ? { file } : {}));
         gpu.on('ready', () => { if (this.gpu !== gpu) return; this._place(); this._syncVisible(); this._grab(); });
         gpu.on('tick', () => { if (this.gpu === gpu) { this.tickT = Date.now(); this.tickHandlers.forEach((fn) => fn()); } });
-        gpu.on('close', () => { if (this.gpu === gpu) { clearTimeout(this.frontTimer); this.blocked = false; this._lost(); } });
+        let onScreen = false;
+        gpu.on('close', () => {
+            if (this.gpu !== gpu) return;
+            if (this.shownT && this._shown()) this.lastInterruption = 'Renderer disconnected';
+            onScreen = false;
+            clearTimeout(this.frontTimer); this.blocked = false; this._lost();
+        });
         gpu.on('stats', (s) => { this.gpuStats = s; });
         // mgu-render/1: the renderer shows the app only while its foreground gate has it in front. A screen
         // that stays shown here while the gate says otherwise (seen: a leftover install claiming the same
         // RHMI uuid, which the gate then ignores) is drawn in the HMI's own image until the gate agrees.
         gpu.on('state', (st) => {
             if (this.gpu !== gpu) return;
+            if (onScreen && !st.onScreen && this._shown() && gpu.visible)
+                this.lastInterruption = st.front ? 'Layer hidden' : 'HMI foreground changed';
+            onScreen = st.onScreen;
             clearTimeout(this.frontTimer);
             if (st.front) {
                 if (this.blocked) { this.blocked = false; this.log.info('display: renderer has the app in front again'); this.lastWords = null; this._syncVisible(); this._grab(); this._hmiBar(); }
@@ -589,11 +608,11 @@ class Display {
         return this.ui.isVisible(this.screen.name) && !this.ui.isVisible('SETTINGS') && (!this.ui.hasFocus || this.ui.hasFocus(this.screen.name));
     }
 
-    _syncVisible() {
+    _syncVisible(resume) {
         if (!this.gpu) return;
         const on = this._shown();
-        if (!on && this.showTimer) { clearTimeout(this.showTimer); this.showTimer = null; }
-        if (on && !this.gpu.visible) {
+        if ((!on || resume) && this.showTimer) { clearTimeout(this.showTimer); this.showTimer = null; }
+        if (on && !this.gpu.visible && !resume) {
             // the HMI zooms / slides its page in when the screen opens: the picture shows once the page
             // stands where it ends, not shifted and too big for a moment on top of the animation
             if (!this.showTimer) {

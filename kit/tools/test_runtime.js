@@ -58,9 +58,12 @@ async function setup(screen) {
     let conn = null;
     onConn = (c) => { conn = c; ready(c); };
     const log = { errors: [], info() {}, warn() {}, debug() {}, error: (...a) => log.errors.push(a) };
-    const vis = new Set(['MAIN']), visH = [];
+    const vis = new Set(['MAIN']), visH = [], focusH = [];
+    let focused = true;
     const ui = {
         rhmi: null, close() {}, visible() {}, onVisible: (fn) => visH.push(fn), isVisible: (n) => vis.has(n),
+        onFocus: (fn) => focusH.push(fn), hasFocus: () => focused,
+        setFocus(v) { focused = v; focusH.forEach(fn => fn('MAIN', v)); },
         setVisible: (v) => { if (v) vis.add('MAIN'); else vis.delete('MAIN'); visH.forEach((fn) => fn('MAIN', v)); },
     };
     const spec = { id: 'test', title: 'Test', screens: [Object.assign({ name: 'MAIN', kind: 'canvas', buttons: [['BTN_SETTINGS', 'Settings']] },screen)] };
@@ -80,7 +83,24 @@ const test = (name, fn) => cases.push([name, fn]);
 
 test('a chrome-free pixel game opts into the native touch transport', async () => {
     const t=await setup({chrome:false,nativePixels:true});
-    try {assert.strictEqual(t.d.gpu.opts.native,true);assert(t.d.own());}
+    try {
+        assert.strictEqual(t.d.gpu.opts.native, true);
+        assert(t.d.own());
+        assert(!t.d.lastInterruption);
+        assert(await waitFor(() => t.d.gpu.visible));
+        t.ui.setFocus(false);
+        assert.strictEqual(t.d.gpu.visible, false, 'an HMI popup immediately hides the game');
+        t.ui.setFocus(true);
+        assert.strictEqual(t.d.lastInterruption, 'HMI focus lost');
+        assert.strictEqual(t.d.gpu.visible, true, 'returning to the same visible game does not replay the page-opening delay');
+        t.d.gpu.emit('state', {onScreen:true, front:true});
+        t.d.gpu.emit('state', {onScreen:false, front:true});
+        assert.strictEqual(t.d.lastInterruption, 'Layer hidden');
+        t.d.gpu.emit('close');
+        assert.strictEqual(t.d.lastInterruption, 'Renderer disconnected');
+        t.ui.setVisible(false); t.ui.setVisible(true); t.ui.setFocus(true);
+        assert.strictEqual(t.d.gpu.visible, false, 'opening a new page still waits for its animation');
+    }
     finally {t.end();}
 });
 

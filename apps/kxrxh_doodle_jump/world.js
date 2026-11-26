@@ -11,7 +11,6 @@ class World {
         const scale=h/960,gw=544*scale,gx=(w-gw)/2,sw=Math.max(0,gx);
         this.phase+=dt*(playing?8:1.5);
         this.lean+=(tilt*18-this.lean)*(1-Math.exp(-dt*6));
-        cv.fillRect(0,0,w,h,'#fff3e3');
         if(!sw)return;
         const paper=scene.paperWidth?scene.paperWidth*scale:0;
         const margins=[[0,2,LEFT,-1],[gx+gw,3,RIGHT,1]];

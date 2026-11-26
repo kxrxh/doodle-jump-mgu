@@ -130,6 +130,22 @@ class GpuCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'GPU texture exceeds'):
             gl('glDrawArrays', 5, 0, 4)
 
+    def test_gpu_omits_invisible_triangles_and_keeps_crossing_edges_and_hit_bounds(self):
+        m, renderer, gl, upload = self.context()
+        # Two coincident vertices, one outside triangle, then a triangle crossing the viewport.
+        xy = (0, 0, 0, 0, 3, 3, -4, 0, -2, 1, -3, 4, -2, 2, 2, -2, 6, 6)
+        pointer = m.malloc(len(xy) * 4)
+        m.uc.mem_write(pointer, struct.pack('<18f', *xy))
+        gl('glDisableClientState', 0x8078)
+        gl('glVertexPointer', 2, 0x1406, 0, pointer)
+        renderer.begin_gpu_frame(True)
+        gl('glDrawArrays', 4, 0, 9)
+        batch = commands(messages(renderer.gpu_frame())[-1][1])[2]
+        self.assertEqual(len(batch), 1)
+        self.assertEqual(batch[0][6][0::8], (-2, 2, 6))
+        self.assertEqual(batch[0][6][1::8], (2, -2, 6))
+        self.assertEqual(renderer.input_rectangles[-1][0], (-4, -2, 6, 6))
+
     def test_incomplete_triangle_vertices_are_ignored(self):
         m, renderer, gl, upload = self.context()
         renderer.begin_gpu_frame(True)
