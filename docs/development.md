@@ -31,6 +31,8 @@ python3 tools/store_build.py kxrxh_doodle_jump
 
 This verifies the base runtime, host update and original game downloads and creates
 `dist/kxrxh_doodle_jump@<version>.tgz`. Store installs that ready package.
+For the **Tags** channel, Store runs the same build on the MGU using
+`mgu-repo.json`.
 
 For source development, install Python 3.12+, Node.js, Docker and clang, then run:
 
@@ -129,10 +131,10 @@ with the verified artifact URL, size and SHA-256, then replace the `catalog`
 release's catalog. Retain required licenses and corresponding GPU worker sources.
 Keep BMW's SDK out of packages.
 
-For a GitHub update to an existing v0.14.1 Store installation, use
+To build the host archive used by the Store source build, run
 `python3 tools/build_app_patch.py <v0.14.1-app.tgz> <doodle-host> <runtime-licenses>`.
-This packages the host and menu files. Pin its archive in `tools/runtime.json` so
-source builds use the same host.
+Publish the archive as a GitHub release asset and pin it in `tools/runtime.json`
+before tagging the app version for Store.
 
 For performance diagnosis, enable **Show FPS**. **Game** measures completed engine
 frames; **Render** measures renderer frames; **Native** counts compositor callbacks.

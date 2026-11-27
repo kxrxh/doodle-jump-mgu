@@ -6,7 +6,7 @@
       "kind": "app",
       "version": "0.14.1",
       "title": "Doodle Jump",
-      "description": "Doodle Jump for MGU7",
+      "description": "Doodle Jump for MGU7. For v0.14.3 and newer, add this repository in Store on the Tags channel.",
       "author": "kxrxh",
       "mguHmi": [
         "ID7"
