@@ -4,30 +4,30 @@
     {
       "id": "kxrxh_doodle_jump",
       "kind": "app",
-      "version": "0.14.1",
+      "version": "0.14.3",
       "title": "Doodle Jump",
-      "description": "Doodle Jump for MGU7. For v0.14.3 and newer, add this repository in Store on the Tags channel.",
+      "description": "Doodle Jump for MGU7",
       "author": "kxrxh",
       "mguHmi": [
         "ID7"
       ],
       "requires": {
         "mgu-render": "0.6.26",
-        "doodle-gpu": "2.1.0"
+        "doodle-gpu": "2.1.1"
       },
       "icon": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/catalog/kxrxh_doodle_jump.png",
       "iconSha256": "5eb833c388867f4d29701358f81687f6cf53a7140eb18376bdf491b679c7b581",
       "artifact": {
-        "name": "kxrxh_doodle_jump@0.14.1.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.1/kxrxh_doodle_jump@0.14.1.tgz",
-        "size": 27136484,
-        "sha256": "9cbb5f791b0eb4982c85d0007ed5ff99d883b9a02ad12baa99c926c1cde678c8"
+        "name": "kxrxh_doodle_jump@0.14.3.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.3/kxrxh_doodle_jump@0.14.3.tgz",
+        "size": 27135515,
+        "sha256": "e7fff155b71e3e99b54b789e029cee7298d413b776231106593f019c828ca945"
       }
     },
     {
       "id": "doodle-gpu",
       "kind": "tool",
-      "version": "2.1.0",
+      "version": "2.1.1",
       "title": "Doodle Jump GPU support",
       "description": "Draws Doodle Jump into compositor GPU buffers",
       "mguHmi": [
@@ -40,10 +40,10 @@
       "uninstallable": true,
       "author": "kxrxh",
       "artifact": {
-        "name": "doodle-gpu@2.1.0.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.11.0/doodle-gpu@2.1.0.tgz",
-        "size": 42886,
-        "sha256": "f6afc0bc7863607acf77af5a0bd5838257d4d0b65ab52cfe467dcfa90c8a97e1"
+        "name": "doodle-gpu@2.1.1.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.3/doodle-gpu@2.1.1.tgz",
+        "size": 43238,
+        "sha256": "e50984bba8ce625e2f3be820c762f9619b0a81a27a50797252ae185b78c102c4"
       }
     }
   ]

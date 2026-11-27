@@ -8,10 +8,10 @@ Play Doodle Jump on iDrive 7 (MGU), with all themes and sounds.
    ```text
    https://github.com/kxrxh/doodle-jump-mgu
    ```
-2. Select **Tags**.
+2. Select **Releases**.
 3. Select **Doodle Jump** and choose **Install**.
 
-If your existing source follows **Releases**, remove the repository entry under **Settings → Sources**, then add it again on **Tags**. Open **Installed → Doodle Jump** and choose **Update**. Store builds the update on the MGU and carries over your save data.
+To update, use **Check now**, then open **Installed → Doodle Jump** and choose **Update**. Store downloads the release package and carries over your save data.
 
 ## Controls
 
