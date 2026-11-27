@@ -7,14 +7,17 @@ GPU worker connection. Two app JavaScript files bridge Store's SDK and launch th
 | Directory | Contents |
 | --- | --- |
 | `apps/kxrxh_doodle_jump/` | Store SDK adapter and native process bootstrap |
-| `runtime/host/` | Rust host: assets, JNI, audio, input, scenery, scheduling and GPU transport |
+| `runtime/host/src/` | Rust runtime; `host/`, `session/`, `gpu/` and `libc/` group their implementation by responsibility |
+| `runtime/host/tests/unit/` | Rust unit tests, separate from production source |
 | `runtime/recomp/` | ARM-to-x86-64 translator and iparecomp provenance |
 | `runtime/*.cpp` | C++ drawing, mixer and frame encoding |
 | `native/doodle-gpu/` | Independent EGL/Wayland presentation worker |
 | `kit/` | MGU toolkit subset and browser emulator |
-| `tools/`, `tests/` | Build, comparison and verification tools |
+| `tools/`, `tests/` | Build tools and process, backend and recompilation integration tests |
 
 Generated files, downloads and previews stay in ignored directories.
+Unit test modules retain access to private runtime code through test-only module
+declarations. Run them with the existing Cargo test command below.
 
 ## Build or preview
 
@@ -64,6 +67,9 @@ for deterministic comparisons and benchmarks. The browser emulator uses the
 toolkit's separate WebAssembly renderer.
 
 ## Compare against the previous host
+
+Unicorn is used only in development to verify translated code against the original
+ARM engine. The x86-64 game, Cargo build and Store package do not depend on it.
 
 The Python host is an external, SHA-pinned v0.12.1 development oracle. Prepare it
 without maintaining a second host in this repository:
