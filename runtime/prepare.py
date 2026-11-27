@@ -102,8 +102,9 @@ def main():
         raise SystemExit('Verified game engine missing; run python3 tools/get_original.py first')
     generated = ROOT / 'data/recomp-build'
     shutil.rmtree(generated, ignore_errors=True)
-    subprocess.run([sys.executable, str(PROJECT / 'tools/recompile.py'), '--report',
-                    '--original', str(original), '--output', str(generated)], check=True)
+    sys.path.insert(0, str(PROJECT / 'tools'))
+    from recompile import PROFILE, generate
+    generate(original, generated, PROFILE, container=True)
     shutil.rmtree(BUNDLE, ignore_errors=True)
     (BUNDLE / 'recomp').mkdir(parents=True)
     command = ['docker', 'run', '--rm', '--platform', 'linux/amd64',

@@ -9,7 +9,7 @@ GPU worker connection. Two app JavaScript files bridge Store's SDK and launch th
 | `apps/kxrxh_doodle_jump/` | Store SDK adapter and native process bootstrap |
 | `runtime/host/src/` | Rust runtime; `host/`, `session/`, `gpu/` and `libc/` group their implementation by responsibility |
 | `runtime/host/tests/unit/` | Rust unit tests, separate from production source |
-| `runtime/recomp/` | ARM-to-x86-64 translator and iparecomp provenance |
+| `runtime/recomp/` | Rust ARM-to-C translator, C++ guest bridge and iparecomp provenance |
 | `runtime/*.cpp` | C++ drawing, mixer and frame encoding |
 | `native/doodle-gpu/` | Independent EGL/Wayland presentation worker |
 | `kit/` | MGU toolkit subset and browser emulator |
@@ -53,9 +53,11 @@ for suite in tests/runtime/test_*.js; do node "$suite" || exit 1; done
 node kit/tools/test_runtime.js
 ```
 
-The build scripts fetch a verified Rust SDK and miniaudio sources, compile against
-glibc 2.27, and produce `dist/runtime-linux-x86_64.pack`. Runtime packaging includes
-licenses and excludes Python, Unicorn, Cargo and build sources. Update the URL,
+The build scripts fetch a verified Rust SDK and miniaudio sources. During the
+off-device build, the Rust translator emits C from the ARM library. The generated
+C and the C++ guest bridge compile into `recomp/game.so` against glibc 2.27.
+The build produces `dist/runtime-linux-x86_64.pack` with licenses and excludes
+Python, Unicorn, Cargo and build sources. Update the URL,
 size and SHA-256 in `tools/runtime.json` before packaging a new release.
 
 The ARM library supplies original data; translated game logic runs as x86-64
@@ -70,6 +72,10 @@ toolkit's separate WebAssembly renderer.
 
 Unicorn is used only in development to verify translated code against the original
 ARM engine. The x86-64 game, Cargo build and Store package do not depend on it.
+
+The recompilation suite also compares the Rust translator's C and coverage
+report with the previous Python emitter. Python's Capstone and pyelftools
+packages are used by the development oracle and tracing tools.
 
 The Python host is an external, SHA-pinned v0.12.1 development oracle. Prepare it
 without maintaining a second host in this repository:

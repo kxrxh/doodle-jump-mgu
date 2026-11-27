@@ -30,6 +30,17 @@ def docker(*command, work='/work'):
             '-v', f'{ROOT}:/work', '-w', work, IMAGE, *command]
 
 
+def cargo_in_docker(*command, work='/work/runtime/host', target='target', **environment):
+    return docker(
+        'env',
+        'PATH=/work/.cache/rust-host/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        'CARGO_HOME=/work/.cache/rust-host/cargo',
+        'CARGO_HTTP_CAINFO=/work/.cache/rust-host/cacert.pem',
+        f'CARGO_TARGET_DIR=/work/.cache/rust-host/{target}',
+        *(f'{key}={value}' for key, value in environment.items()),
+        'cargo', *command, work=work)
+
+
 def prepare_media():
     source = MEDIA / 'miniaudio-1.71'
     archive = download(MEDIA_URL, MEDIA_SHA256, CACHE / 'downloads/miniaudio-1.71.tar.gz')
@@ -85,19 +96,13 @@ def main():
     native = ROOT / 'runtime/bundle'
     if not all((native / name).is_file() for name in ('native.so', 'recomp/game.so')):
         raise SystemExit('Build the verified native game first with runtime/prepare.py')
-    command = ['docker', 'run', '--rm', '--platform', 'linux/amd64',
-               '-v', f'{ROOT}:/work', '-w', '/work/runtime/host',
-               '-e', 'PATH=/work/.cache/rust-host/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-               '-e', 'CARGO_HOME=/work/.cache/rust-host/cargo',
-               '-e', 'CARGO_HTTP_CAINFO=/work/.cache/rust-host/cacert.pem',
-               '-e', 'CARGO_TARGET_DIR=/work/.cache/rust-host/target',
-               '-e', 'DOODLE_NATIVE_DIR=/work/runtime/bundle',
-               '-e', 'LD_LIBRARY_PATH=/work/runtime/bundle:/work/runtime/bundle/recomp', IMAGE, 'cargo']
     cargo = {'build': ['build', '--release', '--locked'],
              'test': ['test', '--locked'],
              'clippy': ['clippy', '--all-targets', '--all-features', '--locked', '--', '-D', 'warnings'],
              'fmt': ['fmt', '--all', '--', '--check']}[args.command]
-    subprocess.run(command + cargo, check=True)
+    subprocess.run(cargo_in_docker(
+        *cargo, DOODLE_NATIVE_DIR='/work/runtime/bundle',
+        LD_LIBRARY_PATH='/work/runtime/bundle:/work/runtime/bundle/recomp'), check=True)
     if args.command == 'build':
         print(CACHE / 'target/release/doodle-host')
 
