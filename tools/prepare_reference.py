@@ -1,7 +1,6 @@
 """Prepare the pinned Python release as an external development oracle."""
 import argparse
 import hashlib
-import importlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -182,10 +181,6 @@ def activate(current=True, directory=None):
         if value in sys.path:
             sys.path.remove(value)
         sys.path.insert(0, value)
-    package = importlib.import_module('recomp')
-    for path in (directory / 'recomp', ROOT / 'runtime/recomp'):
-        if str(path) not in package.__path__:
-            package.__path__.append(str(path))
     sys.dont_write_bytecode = True
     return directory
 

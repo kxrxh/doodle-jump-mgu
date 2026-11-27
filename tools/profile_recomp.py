@@ -29,7 +29,7 @@ class Edge(C.Structure):
 
 
 def helper():
-    source = ROOT / 'runtime/recomp/profile.cpp'
+    source = ROOT / 'tools/recomp_reference/profile.cpp'
     directory = ROOT / '.cache/recomp-profile'
     directory.mkdir(parents=True, exist_ok=True)
     library = directory / f'profile-{sys.platform}-{platform.machine()}.so'
@@ -155,7 +155,7 @@ def profile(original, themes, frames, play, max_blocks, max_edges):
     from arm import Arm, BASE, ENGINE_SHA256
     from game import Game
     from audio import Audio
-    from recomp.elf import ElfImage
+    from recomp_reference.elf import ElfImage
     library = original / 'extracted/lib/armeabi-v7a/libDoodleJump.so'
     digest = hashlib.sha256(library.read_bytes()).hexdigest()
     if digest != ENGINE_SHA256:

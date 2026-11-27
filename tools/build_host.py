@@ -66,7 +66,7 @@ def prepare_toolchain():
     if subprocess.run(['docker', 'image', 'inspect', IMAGE], stdout=subprocess.DEVNULL,
                       stderr=subprocess.DEVNULL).returncode:
         subprocess.run(['docker', 'build', '--platform', 'linux/amd64', '-t', IMAGE,
-                        '-f', str(ROOT / 'runtime/recomp/Dockerfile'), str(ROOT)], check=True)
+                        '-f', str(ROOT / 'tools/Dockerfile.build-host'), str(ROOT)], check=True)
     for name, checksum in RUST_COMPONENTS.items():
         binary = {'clippy': 'cargo-clippy', 'rustfmt': 'rustfmt'}.get(name, name)
         present = (TOOLCHAIN / 'bin' / binary).is_file() if name != 'rust-std' else any(

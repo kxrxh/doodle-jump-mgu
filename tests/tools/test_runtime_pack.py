@@ -46,7 +46,12 @@ class RuntimePackTests(unittest.TestCase):
             base = 12 + size
             files = set(index['files'])
             self.assertTrue({'doodle-host', 'native.so', 'recomp/game.so', 'arm_helpers.o',
-                             'assets/cursor.png', 'NOTICE', 'LICENSE', 'recomp/LICENSE'} <= files)
+                             'assets/cursor.png', 'NOTICE', 'LICENSE', 'recomp/LICENSE',
+                             'licenses/GPL-3.txt'} <= files)
+            offset, length = index['files']['licenses/GPL-3.txt']
+            stream.seek(base + offset)
+            gpl = (PACK.parents[1] / 'native/doodle-gpu/LICENSE').read_bytes()
+            self.assertEqual(zlib.decompress(stream.read(length), -15), gpl)
             unwanted = sorted(name for name in files if name.endswith(('.py', '.pyc', '.rs', '.cpp', '.c', '.S')) or any(
                 part.startswith(('unicorn', 'libunicorn', 'capstone', 'site-packages')) for part in name.split('/')))
             self.assertEqual(unwanted, [], 'Production must not contain source build fallbacks or Python dependencies')

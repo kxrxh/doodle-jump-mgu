@@ -2,14 +2,10 @@
 import hashlib
 import json
 from pathlib import Path
-import sys
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'runtime'))
-sys.path.insert(0, str(ROOT / 'tools'))
 from recompile import assemble_helpers
-from recomp.elf import ElfImage, Function
-from recomp.lifter import Lifter
+from .elf import ElfImage, Function
+from .lifter import Lifter
 
 
 def apply_profile(image, path):

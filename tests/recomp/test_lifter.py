@@ -16,7 +16,7 @@ from elftools.elf.elffile import ELFFile
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE
 from unicorn import arm_const as ucarm
 
-from recomp.lifter import Lifter
+from recomp_reference.lifter import Lifter
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -150,7 +150,7 @@ void run(uint32_t* words, uint8_t* bytes) {
 ''')
         output = directory / 'fixture.so'
         subprocess.run(['cc', '-std=c11', '-O2', '-fPIC', '-shared',
-                        '-I', str(ROOT / 'runtime/recomp'), str(source), '-o', str(output)],
+                        '-I', str(ROOT / 'runtime/recomp/guest'), str(source), '-o', str(output)],
                        check=True, capture_output=True)
         self.library = ctypes.CDLL(str(output))
         self.library.run.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint8)]

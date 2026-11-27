@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 ORIGINAL = ROOT / 'original/extracted/lib/armeabi-v7a/libDoodleJump.so'
-PROFILE = ROOT / 'runtime/recomp/entries.json'
+PROFILE = ROOT / 'runtime/recomp/translator/entries.json'
 CLI = ROOT / 'tools/recompile.py'
 
 
@@ -21,15 +21,15 @@ class RustTranslatorTests(unittest.TestCase):
             python = path / 'python'
             result = subprocess.run(
                 [sys.executable, '-I', '-S', str(CLI), '--report', '--original', str(ORIGINAL),
-                 '--output', str(rust), '--profile', str(PROFILE)],
+                 '--output', str(rust)],
                 capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             subprocess.run([
                 sys.executable, '-c',
-                'from pathlib import Path; from recompile_reference import generate; import sys; '
+                'from pathlib import Path; from recomp_reference.emit import generate; import sys; '
                 'generate(*map(Path, sys.argv[1:]))',
                 str(ORIGINAL), str(python), str(PROFILE)],
-                cwd=ROOT / 'tests/recomp', stdout=subprocess.DEVNULL, check=True)
+                cwd=ROOT / 'tools', stdout=subprocess.DEVNULL, check=True)
             self.assertEqual(sorted(p.name for p in rust.iterdir()),
                              sorted(p.name for p in python.iterdir()))
             for expected in sorted(python.iterdir()):

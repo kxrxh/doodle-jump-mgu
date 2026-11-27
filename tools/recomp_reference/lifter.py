@@ -1,8 +1,8 @@
 """Translate reachable ARM/Thumb instructions to C using Capstone operand detail.
 
-Adapted from iparecomp; source revision and license are recorded alongside this
-file. The ELF loader supplies function ranges, while control-flow discovery
-separates instructions from literal pools. Unsupported reachable code traps.
+Adapted from iparecomp. See runtime/recomp/upstream.json and runtime/recomp/LICENSE.
+The ELF loader supplies function ranges, while control-flow discovery separates
+instructions from literal pools. Unsupported reachable code traps.
 """
 from __future__ import annotations
 

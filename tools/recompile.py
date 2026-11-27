@@ -9,7 +9,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TRANSLATOR = ROOT / 'runtime/recomp/translator/Cargo.toml'
-PROFILE = ROOT / 'runtime/recomp/entries.json'
+PROFILE = TRANSLATOR.with_name('entries.json')
 
 
 def assemble_helpers():
@@ -44,7 +44,7 @@ def generate(original, output, profile=None, *, container=False):
 
 
 def compile_module(output, library, optimization):
-    directory = ROOT / 'runtime/recomp'
+    directory = ROOT / 'runtime/recomp/guest'
     flags = ['-fPIC', '-fexceptions', '-fno-strict-aliasing', '-ffp-contract=off',
              f'-O{optimization}', '-I' + str(output), '-I' + str(directory)]
     sources = sorted(output.glob('*.c'))
@@ -70,14 +70,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--original', type=Path, default=ROOT / 'original/extracted/lib/armeabi-v7a/libDoodleJump.so')
     parser.add_argument('--output', type=Path, default=ROOT / '.cache/recomp-build')
-    parser.add_argument('--library', type=Path, default=ROOT / 'runtime/recomp/game.so')
+    parser.add_argument('--library', type=Path, help='defaults to game.so in the output directory')
     parser.add_argument('--report', action='store_true')
     parser.add_argument('--profile', type=Path, default=PROFILE)
     parser.add_argument('--optimization', choices=('0', '1', '2', '3'), default='2')
     args = parser.parse_args()
     generate(args.original, args.output, args.profile)
     if not args.report:
-        compile_module(args.output, args.library, args.optimization)
+        compile_module(args.output, args.library or args.output / 'game.so', args.optimization)
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@ def check_native(path):
 
 def licenses(destination):
     shutil.copytree(ROOT / 'licenses', destination)
+    shutil.copy2(PROJECT / 'native/doodle-gpu/LICENSE', destination / 'GPL-3.txt')
     media = ROOT / 'data/host-media/miniaudio-1.71/LICENSE'
     shutil.copy2(media, destination / 'miniaudio.txt')
     rust = PROJECT / '.cache/rust-host/toolchain/share/doc/rust'
@@ -122,10 +123,10 @@ g++ -std=c++14 -shared -fPIC -O3 -pthread -static-libstdc++ -static-libgcc \
 strip --strip-unneeded bundle/native.so
 for source in data/recomp-build/*.c; do
     cc -std=c11 -fPIC -fexceptions -fno-strict-aliasing -ffp-contract=off -O2 \
-        -Idata/recomp-build -Irecomp -c "$source" -o "${source%.c}.o"
+        -Idata/recomp-build -Irecomp/guest -c "$source" -o "${source%.c}.o"
 done
 g++ -std=c++14 -fPIC -fexceptions -fno-strict-aliasing -ffp-contract=off -O2 \
-    -Idata/recomp-build -Irecomp -c recomp/guest.cpp -o data/recomp-build/guest.o
+    -Idata/recomp-build -Irecomp/guest -c recomp/guest/guest.cpp -o data/recomp-build/guest.o
 g++ -shared -static-libstdc++ -static-libgcc data/recomp-build/*.o -lm -o bundle/recomp/game.so
 strip --strip-unneeded bundle/recomp/game.so
 '''],check=True)

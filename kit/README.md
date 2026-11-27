@@ -9,9 +9,8 @@ dashboard widgets and data readers from unrelated apps are excluded. Verified
 game downloads and engine-pack extraction are handled by the app's own tools.
 
 The browser preview uses the committed WebAssembly renderer in `emu/web/gfx/`.
-The renderer and `emu/wasm/` adapter are GPL-3.0-or-later, with the original
-renderer's [MIT notice](LICENSE.mgu-renderd). The GPL text is in
-[`runtime/licenses/GPL-3.txt`](../runtime/licenses/GPL-3.txt).
+The renderer and `emu/wasm/` adapter use the [GPL-3.0-or-later license](../native/doodle-gpu/LICENSE).
+The original renderer's [MIT notice](../native/doodle-gpu/LICENSE.mgu-renderd) is retained there too.
 
 To rebuild WebAssembly, fetch the matching upstream renderer sources first.
 Requires Git and Docker with the pinned Emscripten image.

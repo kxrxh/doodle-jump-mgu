@@ -1,5 +1,5 @@
 // CPU state and helpers for iparecomp-generated ARM/Thumb code.
-// See upstream.json and LICENSE for provenance and the original MIT notice.
+// See ../upstream.json and ../LICENSE for provenance and the original MIT notice.
 // Checked guest mappings share decoded textures with the host renderer.
 #pragma once
 

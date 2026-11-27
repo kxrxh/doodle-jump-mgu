@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RECOMP = ROOT / 'runtime/recomp'
+RECOMP = ROOT / 'runtime/recomp/guest'
 R0, R1, LR, PC, CPSR, FPSCR, D0 = 66, 67, 10, 11, 3, 6, 14
 
 FIXTURE = r'''

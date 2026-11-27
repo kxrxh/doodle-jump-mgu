@@ -9,7 +9,9 @@ GPU worker connection. Two app JavaScript files bridge Store's SDK and launch th
 | `apps/kxrxh_doodle_jump/` | Store SDK adapter and native process bootstrap |
 | `runtime/host/src/` | Rust runtime; `host/`, `session/`, `gpu/` and `libc/` group their implementation by responsibility |
 | `runtime/host/tests/unit/` | Rust unit tests, separate from production source |
-| `runtime/recomp/` | Rust ARM-to-C translator, C++ guest bridge and iparecomp provenance |
+| `runtime/recomp/translator/` | Off-device Rust ARM-to-C translator and pinned entry profile |
+| `runtime/recomp/guest/` | C++ guest bridge and ARM CPU context used by the compiled module |
+| `tools/recomp_reference/` | Python parity reference and native trace recorder |
 | `runtime/*.cpp` | C++ drawing, mixer and frame encoding |
 | `native/doodle-gpu/` | Independent EGL/Wayland presentation worker |
 | `kit/` | MGU toolkit subset and browser emulator |
@@ -62,6 +64,8 @@ size and SHA-256 in `tools/runtime.json` before packaging a new release.
 
 The ARM library supplies original data; translated game logic runs as x86-64
 code in `recomp/game.so`. All 12 themes and original sound assets are retained.
+With local Cargo, `python3 tools/recompile.py` writes generated C and `game.so`
+under `.cache/recomp-build/` unless you pass output paths.
 
 Normal startup uses `doodle-host --session`: the host clocks frames and sends GPU
 scenes directly to the worker. Its explicit per-frame interface remains available

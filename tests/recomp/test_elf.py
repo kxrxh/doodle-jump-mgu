@@ -14,7 +14,7 @@ from types import MethodType, SimpleNamespace
 import unittest
 
 try:
-    from recomp.elf import ElfImage
+    from recomp_reference.elf import ElfImage
 except ImportError:
     ElfImage = None
 
@@ -58,9 +58,9 @@ class ElfTests(unittest.TestCase):
                 image.read(address, size)
 
     def test_thumb_tail_branch_preserves_instruction_mode(self):
-        from recomp.elf import Function
+        from recomp_reference.elf import Function
         sys.path.insert(0, str(ROOT / 'tools'))
-        from recompile_reference import discover
+        from recomp_reference.emit import discover
         code = bytes.fromhex('00e07047704700bf')  # B 0x1004; BX LR; BX LR; NOP
         image = SimpleNamespace(
             sections=[(0x1000, len(code), '.text')],
@@ -72,9 +72,9 @@ class ElfTests(unittest.TestCase):
         self.assertTrue(image.functions[0x1004].thumb, 'B preserves Thumb; only BLX interworks')
 
     def test_bx_pc_veneer_creates_arm_entry_after_thumb_prefix(self):
-        from recomp.elf import Function
+        from recomp_reference.elf import Function
         sys.path.insert(0, str(ROOT / 'tools'))
-        from recompile_reference import discover
+        from recomp_reference.emit import discover
         code = bytes.fromhex('7847c0461eff2fe1')  # Thumb BX PC; padding; ARM BX LR
         image = SimpleNamespace(
             sections=[(0x1000, len(code), '.text')],
@@ -86,9 +86,9 @@ class ElfTests(unittest.TestCase):
         self.assertFalse(image.functions[0x1004].thumb)
 
     def test_compare_branch_discovers_target_across_unwind_boundary(self):
-        from recomp.elf import Function
+        from recomp_reference.elf import Function
         sys.path.insert(0, str(ROOT / 'tools'))
-        from recompile_reference import discover
+        from recomp_reference.emit import discover
         code = bytes.fromhex('08b1704700bf7047')  # CBZ R0, 0x1006; BX LR; NOP; BX LR
         image = SimpleNamespace(
             sections=[(0x1000, len(code), '.text')], entry_modes={0x1000: True},
@@ -101,9 +101,9 @@ class ElfTests(unittest.TestCase):
         self.assertTrue(image.functions[0x1006].thumb)
 
     def test_discovered_target_cannot_split_an_existing_instruction(self):
-        from recomp.elf import Function
+        from recomp_reference.elf import Function
         sys.path.insert(0, str(ROOT / 'tools'))
-        from recompile_reference import discover
+        from recomp_reference.emit import discover
         code = bytes.fromhex('00f10100704700bffbe7')  # ADD.W; BX LR; padding; false B into ADD.W
         image = SimpleNamespace(
             sections=[(0x1000, len(code), '.text')], entry_modes={0x1000: True, 0x1008: True},
@@ -116,9 +116,9 @@ class ElfTests(unittest.TestCase):
 
     def test_data_in_untrusted_ranges_cannot_split_a_real_thumb_instruction(self):
         sys.path.insert(0, str(ROOT / 'tools'))
-        from recompile_reference import apply_profile, discover
+        from recomp_reference.emit import apply_profile, discover
         image = self.image()
-        apply_profile(image, ROOT / 'runtime/recomp/entries.json')
+        apply_profile(image, ROOT / 'runtime/recomp/translator/entries.json')
         discover(image)
         # This is the second halfword of ADD.W at 0x1001e600 in the first ctor.
         self.assertTrue(0x1001e602 not in image.functions, 'A call target must not split ADD.W')
@@ -128,7 +128,7 @@ class ElfTests(unittest.TestCase):
 
     def test_profile_entries_are_bound_to_the_exact_engine(self):
         sys.path.insert(0, str(ROOT / 'tools'))
-        import recompile_reference as recompile
+        from recomp_reference import emit as recompile
         self.assertTrue(hasattr(recompile, 'apply_profile'), 'verified trace entries are not supported')
         image = self.image()
         with tempfile.TemporaryDirectory() as directory:

@@ -23,15 +23,12 @@ Revision: 96ce1f488f1aa289d87a07627df70c51fe94dae5
 See runtime/LICENSE (shipped as LICENSE in the engine runtime) for its required
 copyright and permission notice.
 
-The native host, controls, side scenery, frame scheduling, lifecycle and GPU
-communication are written in Rust. The JavaScript adapter connects Store's SDK.
 Rust and its standard library are distributed under MIT/Apache-2.0; their notices and
 those of the linked crates are retained in the runtime licenses directory.
 Audio decoding and playback use miniaudio 0.11.25 from miniaudio-python 1.71
 (MIT), including its bundled decoder notices. Image resampling follows Pillow's
-algorithms (MIT-CMU); see runtime/licenses/Pillow.txt. The MGU toolkit retains
-its existing license notices. Python, Pillow and Unicorn are development-only
-comparison tools and are not included in the production host.
+algorithms (MIT-CMU); see runtime/licenses/Pillow.txt. Python and Pillow are
+development-only comparison tools.
 
 Unicorn is a development-only comparison backend, excluded from production
 packages. Its GPL-2.0 and included dependency notices remain in the development
@@ -61,7 +58,8 @@ are separate new assets. Shipping PNG files retain their creation prompts in met
 
 MGU toolkit: https://github.com/cauliflowermossgrape/idrive7-apps
 Revision: cca7f9ad17f96b92e60a89ea98686afe1b662041
-See kit/LICENSE and kit/LICENSE.mgu-renderd.
+See kit/LICENSE. The WebAssembly renderer uses the GPL-3.0-or-later and original
+MIT notices in native/doodle-gpu/LICENSE and native/doodle-gpu/LICENSE.mgu-renderd.
 
 The separately installed doodle-gpu worker presents game textures through EGL
 and a Wayland surface attached to the game's existing compositor layer. The
