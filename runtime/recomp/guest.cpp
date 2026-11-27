@@ -2,6 +2,7 @@
 #include "../dispatch.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -14,6 +15,7 @@
 namespace {
 constexpr size_t page_size = 4096, page_count = 1u << 20;
 constexpr int hook_code = 4, hook_block = 8, hook_write_protected = 256;
+constexpr std::array<int, 3> hook_types{{hook_code, hook_block, hook_write_protected}};
 struct Stopped {};
 struct Allocation {
     void *pointer;
@@ -46,9 +48,9 @@ struct Guest {
     std::vector<uint8_t *> pages{page_count, nullptr};
     std::vector<uint8_t> permissions = std::vector<uint8_t>(page_count);
     std::map<uint64_t, Mapping> mappings;
-    std::map<size_t, Hook> hooks;
+    std::array<std::map<size_t, Hook>, 3> hooks;
     std::vector<Run> runs;
-    size_t next_hook = 1;
+    size_t next_hook = 1, hook_epoch = 0;
     std::string error;
     explicit Guest(ArcDispatchFn fn) : resolver(fn) {
         context.owner = this;
@@ -108,9 +110,23 @@ void set_pc(Guest &g, uint32_t address) {
 }
 void hooks(Guest &g, int type, uint32_t address, uint32_t bytes) {
     using Callback = void (*)(void *, uint64_t, uint32_t, void *);
-    for (auto i = g.hooks.begin(); i != g.hooks.end();) {
-        Hook hook = (i++)->second;
-        if ((hook.type & type) && hook.matches(address)) {
+    auto &selected = g.hooks[type == hook_code ? 0 : 1];
+    size_t cursor = 0;
+    if (selected.size() == 1) {
+        const auto first = selected.begin();
+        cursor = first->first;
+        const Hook hook = first->second;
+        const size_t epoch = g.hook_epoch;
+        if (hook.matches(address)) {
+            reinterpret_cast<Callback>(hook.callback)(&g, address, bytes, hook.user);
+            if (g.stopped()) throw Stopped{};
+        }
+        if (epoch == g.hook_epoch) return;
+    }
+    for (auto i = selected.upper_bound(cursor); i != selected.end(); i = selected.upper_bound(cursor)) {
+        cursor = i->first;
+        Hook hook = i->second;
+        if (hook.matches(address)) {
             reinterpret_cast<Callback>(hook.callback)(&g, address, bytes, hook.user);
             if (g.stopped()) throw Stopped{};
         }
@@ -266,12 +282,23 @@ extern "C" int guest_hook_add(void *guest, size_t *handle, int type, void *callb
             (type & ~(hook_code | hook_block | hook_write_protected)) || begin > UINT32_MAX || end > UINT32_MAX)
             throw std::runtime_error("Invalid AOT guest hook");
         *handle = g.next_hook++;
-        g.hooks.emplace(*handle, Hook{type, callback, user, begin, end});
+        try {
+            for (size_t i = 0; i < hook_types.size(); ++i)
+                if (type & hook_types[i])
+                    g.hooks[i].emplace(*handle, Hook{type, callback, user, begin, end});
+            ++g.hook_epoch;
+        } catch (...) {
+            for (auto &selected : g.hooks) selected.erase(*handle);
+            throw;
+        }
     });
 }
 extern "C" int guest_hook_del(void *guest, size_t handle) {
     return checked(guest, [&](Guest &g) {
-        if (!g.hooks.erase(handle)) throw std::runtime_error("Unknown AOT guest hook");
+        size_t removed = 0;
+        for (auto &selected : g.hooks) removed += selected.erase(handle);
+        if (!removed) throw std::runtime_error("Unknown AOT guest hook");
+        ++g.hook_epoch;
     });
 }
 extern "C" int guest_stop(void *guest) {
@@ -301,9 +328,12 @@ extern "C" void arc_store(Arm32Ctx *c, uint32_t address, uint64_t value, size_t 
         protected_page |= !(g.permissions[page] & 2);
     if (protected_page) {
         using Callback = bool (*)(void *, int, uint64_t, int, int64_t, void *);
-        for (auto i = g.hooks.begin(); i != g.hooks.end();) {
-            Hook hook = (i++)->second;
-            if ((hook.type & hook_write_protected) && hook.matches(address))
+        auto &selected = g.hooks[2];
+        size_t cursor = 0;
+        for (auto i = selected.begin(); i != selected.end(); i = selected.upper_bound(cursor)) {
+            cursor = i->first;
+            Hook hook = i->second;
+            if (hook.matches(address))
                 reinterpret_cast<Callback>(hook.callback)(&g, 22, address, int(size), int64_t(value), hook.user);
             if (g.stopped()) throw Stopped{};
         }

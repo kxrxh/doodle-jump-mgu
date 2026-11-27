@@ -1151,6 +1151,8 @@ fn run_inner(
             }
             session.try_bind(out, now)?;
             session.sync_gate(now);
+            // Deliver completed frames before another guest call can hold the actor.
+            out.pump().map_err(|e| e.to_string())?;
             if out.can_accept_frame() && session.can_frame() && now >= session.clock.next {
                 session.render(&host, audio.as_mut(), out, now)?;
             }

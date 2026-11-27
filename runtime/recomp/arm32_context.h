@@ -306,33 +306,40 @@ static inline void arc_vmrs_nzcv(Arm32Ctx* c) {
 uint64_t arc_load(Arm32Ctx* c, uint32_t address, size_t size);
 void arc_store(Arm32Ctx* c, uint32_t address, uint64_t value, size_t size);
 
-static inline uint64_t arc_read(Arm32Ctx* c, uint32_t a, size_t size) {
-  unsigned page = a >> 12, offset = a & 4095u;
-  if (size <= 4096u - offset && c->pages && c->pages[page] && (c->permissions[page] & 1u)) {
-    uint64_t value = 0;
-    memcpy(&value, c->pages[page] + offset, size);
-    return value;
-  }
-  return arc_load(c, a, size);
+// Fixed widths stay as loads/stores even when a large function outlines these helpers.
+#define ARC_MEMORY(bits, type) \
+static inline uint64_t arc_read##bits(Arm32Ctx* c, uint32_t a) { \
+  unsigned page = a >> 12, offset = a & 4095u; \
+  if (sizeof(type) <= 4096u - offset && c->pages && c->pages[page] && (c->permissions[page] & 1u)) { \
+    type value; \
+    memcpy(&value, c->pages[page] + offset, sizeof(value)); \
+    return value; \
+  } \
+  return arc_load(c, a, sizeof(type)); \
+} \
+static inline void arc_write##bits(Arm32Ctx* c, uint32_t a, type value) { \
+  unsigned page = a >> 12, offset = a & 4095u; \
+  if (sizeof(type) <= 4096u - offset && c->pages && c->pages[page] && (c->permissions[page] & 2u)) { \
+    memcpy(c->pages[page] + offset, &value, sizeof(value)); \
+    return; \
+  } \
+  arc_store(c, a, value, sizeof(type)); \
 }
-static inline void arc_write(Arm32Ctx* c, uint32_t a, uint64_t value, size_t size) {
-  unsigned page = a >> 12, offset = a & 4095u;
-  if (size <= 4096u - offset && c->pages && c->pages[page] && (c->permissions[page] & 2u)) {
-    memcpy(c->pages[page] + offset, &value, size);
-    return;
-  }
-  arc_store(c, a, value, size);
-}
-#define ARC_LD8(a) ((uint32_t)arc_read(c, (uint32_t)(a), 1))
+ARC_MEMORY(8, uint8_t)
+ARC_MEMORY(16, uint16_t)
+ARC_MEMORY(32, uint32_t)
+ARC_MEMORY(64, uint64_t)
+#undef ARC_MEMORY
+#define ARC_LD8(a) ((uint32_t)arc_read8(c, (uint32_t)(a)))
 #define ARC_LD8S(a) ((uint32_t)(int32_t)(int8_t)ARC_LD8(a))
-#define ARC_LD16(a) ((uint32_t)arc_read(c, (uint32_t)(a), 2))
+#define ARC_LD16(a) ((uint32_t)arc_read16(c, (uint32_t)(a)))
 #define ARC_LD16S(a) ((uint32_t)(int32_t)(int16_t)ARC_LD16(a))
-#define ARC_LD32(a) ((uint32_t)arc_read(c, (uint32_t)(a), 4))
-#define ARC_LD64(a) arc_read(c, (uint32_t)(a), 8)
-#define ARC_ST8(a, v) arc_write(c, (uint32_t)(a), (uint8_t)(v), 1)
-#define ARC_ST16(a, v) arc_write(c, (uint32_t)(a), (uint16_t)(v), 2)
-#define ARC_ST32(a, v) arc_write(c, (uint32_t)(a), (uint32_t)(v), 4)
-#define ARC_ST64(a, v) arc_write(c, (uint32_t)(a), (uint64_t)(v), 8)
+#define ARC_LD32(a) ((uint32_t)arc_read32(c, (uint32_t)(a)))
+#define ARC_LD64(a) arc_read64(c, (uint32_t)(a))
+#define ARC_ST8(a, v) arc_write8(c, (uint32_t)(a), (uint8_t)(v))
+#define ARC_ST16(a, v) arc_write16(c, (uint32_t)(a), (uint16_t)(v))
+#define ARC_ST32(a, v) arc_write32(c, (uint32_t)(a), (uint32_t)(v))
+#define ARC_ST64(a, v) arc_write64(c, (uint32_t)(a), (uint64_t)(v))
 
 // --- control flow ----------------------------------------------------------
 // A guest trap: an undefined instruction, or an indirect branch that resolves

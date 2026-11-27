@@ -266,7 +266,18 @@ impl Machine {
         if let Some(v) = self.imports.borrow().get(name) {
             return Ok(*v);
         }
-        let helper = self.helpers.borrow().get(name).copied();
+        // Keep bulk copies and fills out of translated byte loops during frame transitions.
+        let helper = self.helpers.borrow().get(name).copied().filter(|_| {
+            !matches!(
+                name,
+                "memcpy"
+                    | "memmove"
+                    | "__aeabi_memcpy"
+                    | "__aeabi_memmove"
+                    | "memset"
+                    | "__aeabi_memset"
+            )
+        });
         if let Some(v) = helper {
             self.imports.borrow_mut().insert(name.into(), v);
             return Ok(v);
@@ -492,10 +503,16 @@ impl Machine {
         Ok((address, p))
     }
     pub fn copy(&self, destination: u32, source: u32, size: usize) -> Result<u32> {
+        if size > 64 << 20 {
+            return Err("Bulk memory operation exceeds its size limit".into());
+        }
         self.write(destination, &self.read(source, size)?)?;
         Ok(destination)
     }
     pub fn fill(&self, address: u32, value: u8, size: usize) -> Result<u32> {
+        if size > 64 << 20 {
+            return Err("Bulk memory operation exceeds its size limit".into());
+        }
         self.write(address, &vec![value; size])?;
         Ok(address)
     }
@@ -595,6 +612,24 @@ fn section_bytes<'a>(data: &'a [u8], section: &[u32; 10]) -> Result<&'a [u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bulk_buffers_are_rejected_before_allocating_or_accessing_guest_memory() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/bundle");
+        let m = Machine::new(&root).unwrap();
+        assert!(
+            m.copy(u32::MAX, u32::MAX, (64 << 20) + 1)
+                .unwrap_err()
+                .contains("Bulk memory")
+        );
+        assert!(
+            m.fill(u32::MAX, 0, (64 << 20) + 1)
+                .unwrap_err()
+                .contains("Bulk memory")
+        );
+        assert_eq!(m.copy(0, 0, 0).unwrap(), 0);
+        assert_eq!(m.fill(0, 0, 0).unwrap(), 0);
+    }
 
     #[test]
     fn elf_reads_are_little_endian_and_reject_truncation() {

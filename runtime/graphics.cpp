@@ -239,8 +239,16 @@ struct Graphics {
         gpu_word(gpu_output, tex->width);
         gpu_word(gpu_output, tex->height);
         const auto view = tex->view();
-        for (size_t i = 0; i < bytes / 4; ++i)
-            gpu_word(gpu_output, texture_pixel(&view, i));
+        const size_t offset = gpu_output.size();
+        gpu_output.resize(offset + bytes);
+        uint8_t *output = gpu_output.data() + offset;
+        for (size_t i = 0; i < bytes / 4; ++i, output += 4) {
+            const uint32_t pixel = texture_pixel(&view, i);
+            output[0] = uint8_t(pixel);
+            output[1] = uint8_t(pixel >> 8);
+            output[2] = uint8_t(pixel >> 16);
+            output[3] = uint8_t(pixel >> 24);
+        }
         gpu_current[texture] = GpuTexture{token, tex->content_revision};
         gpu_live.insert(token);
         gpu_used.insert(token);

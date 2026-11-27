@@ -54,6 +54,19 @@ static void resolve(Arm32Ctx* c, uint32_t target) {
     case 0x8000:
         ARC_W(c, 15, 0x8000);
         return;
+    case 0xc000: ARC_W(c, 0, ARC_LD8(ARC_R(c, 0))); break;
+    case 0xc004: ARC_W(c, 0, ARC_LD16(ARC_R(c, 0))); break;
+    case 0xc008: ARC_W(c, 0, ARC_LD32(ARC_R(c, 0))); break;
+    case 0xc00c: {
+        uint64_t value = ARC_LD64(ARC_R(c, 0));
+        ARC_W(c, 0, value);
+        ARC_W(c, 1, value >> 32);
+        break;
+    }
+    case 0xc100: ARC_ST8(ARC_R(c, 0), ARC_R(c, 1)); break;
+    case 0xc104: ARC_ST16(ARC_R(c, 0), ARC_R(c, 1)); break;
+    case 0xc108: ARC_ST32(ARC_R(c, 0), ARC_R(c, 1)); break;
+    case 0xc10c: ARC_ST64(ARC_R(c, 0), ARC_R(c, 1) | (uint64_t)ARC_R(c, 2) << 32); break;
     case 0xa000:
         ARC_W(c, 4, ARC_LR(c));
         ARC_W(c, 1, 77);
@@ -81,6 +94,7 @@ static void resolve(Arm32Ctx* c, uint32_t target) {
     default:
         arc_trap(c, "unresolved fixture target");
     }
+    arc_return(c, ARC_LR(c));
 }
 void* fixture_create(void) { return guest_create(resolve); }
 void doodle_resolve(Arm32Ctx* c, uint32_t target) { resolve(c, target); }
@@ -107,6 +121,37 @@ extern "C" uint32_t fixture_snapshot(void) {
 }
 extern "C" size_t fixture_snapshot_owned(void) { return saved ? saved->owned_bytes() : 0; }
 extern "C" void fixture_snapshot_clear(void) { saved.reset(); }
+struct HookProbe { size_t next; unsigned seen = 0; bool removed = false; };
+static void remove_next_hook(void *guest, uint64_t, uint32_t, void *user) {
+    auto &probe = *static_cast<HookProbe *>(user);
+    probe.seen = probe.seen * 10 + 1;
+    if (!probe.removed) {
+        probe.removed = true;
+        if (guest_hook_del(guest, probe.next)) probe.seen = 999;
+    }
+}
+static void deleted_hook(void *, uint64_t, uint32_t, void *user) {
+    auto &probe = *static_cast<HookProbe *>(user);
+    probe.seen = probe.seen * 10 + 2;
+}
+static void last_hook(void *, uint64_t, uint32_t, void *user) {
+    auto &probe = *static_cast<HookProbe *>(user);
+    probe.seen = probe.seen * 10 + 3;
+}
+extern "C" void *fixture_create(void);
+extern "C" unsigned fixture_delete_future_hook(void) {
+    void *guest = fixture_create();
+    HookProbe probe{};
+    size_t first, last;
+    guest_hook_add(guest, &first, 4, reinterpret_cast<void *>(remove_next_hook), &probe, 0x4000, 0x4000);
+    guest_hook_add(guest, &probe.next, 4, reinterpret_cast<void *>(deleted_hook), &probe, 0x4000, 0x4000);
+    guest_hook_add(guest, &last, 4, reinterpret_cast<void *>(last_hook), &probe, 0x4000, 0x4000);
+    guest_context(guest)->r[14] = 0x9000;
+    int result = guest_run(guest, 0x4001, 0x9000);
+    guest_free(guest);
+    return result ? 999 : probe.seen;
+}
+
 '''
 
 
@@ -156,6 +201,10 @@ class GuestTests(unittest.TestCase):
             'guest_mem_unmap': (C.c_int, [C.c_void_p, C.c_uint64, C.c_size_t]),
             'guest_mem_protect': (C.c_int, [C.c_void_p, C.c_uint64, C.c_size_t, C.c_uint32]),
             'guest_get_api': (None, [C.POINTER(GuestApi)]),
+            'guest_hook_add': (C.c_int, [C.c_void_p, C.POINTER(C.c_size_t), C.c_int,
+                                       C.c_void_p, C.c_void_p, C.c_uint64, C.c_uint64]),
+            'guest_hook_del': (C.c_int, [C.c_void_p, C.c_size_t]),
+            'guest_stop': (C.c_int, [C.c_void_p]),
             'guest_run': (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32]),
             'guest_error': (C.c_char_p, [C.c_void_p]),
             'guest_context_size': (C.c_size_t, []),
@@ -168,6 +217,7 @@ class GuestTests(unittest.TestCase):
             'dispatch_begin_call': (C.c_int, [C.c_void_p, C.c_uint64]),
             'dispatch_end_call': (None, [C.c_void_p]),
             'dispatch_error': (C.c_char_p, [C.c_void_p]),
+            'dispatch_clear_error': (None, [C.c_void_p]),
             'dispatch_allocate_image': (C.c_void_p, [C.c_void_p, C.c_uint32, C.c_size_t]),
             'dispatch_release_image': (C.c_int, [C.c_void_p, C.c_uint32]),
             'fixture_register_capture': (C.c_int, [C.c_void_p]),
@@ -256,6 +306,41 @@ class GuestTests(unittest.TestCase):
         self.put(R1, 0xffffffff)
         self.assertNotEqual(self.lib.guest_run(self.guest, 0x6001, 0x9000), 0)
         self.assertEqual(self.read(0x10ffe, 2), b'\x78\x56')
+
+    def test_fixed_width_accesses_keep_unaligned_page_and_permission_checks(self):
+        self.assertEqual(self.lib.guest_mem_map(self.guest, 0x10000, 8192, 3), 0)
+        value = 0xfedcba9876543210
+        for i, width in enumerate((1, 2, 4, 8)):
+            for address in (0x10003, 0x10fff):
+                with self.subTest(width=width, address=address):
+                    self.put(R0, address)
+                    self.put(R1, value & 0xffffffff)
+                    self.put(R0 + 2, value >> 32)
+                    self.execute(0xc101 + 4 * i)
+                    expected = value.to_bytes(8, 'little')[:width]
+                    self.assertEqual(self.read(address, width), expected)
+                    self.put(R0, address)
+                    self.execute(0xc001 + 4 * i)
+                    loaded = self.get(R0) | (self.get(R1) << 32 if width == 8 else 0)
+                    self.assertEqual(loaded, int.from_bytes(expected, 'little'))
+
+        self.assertEqual(self.lib.guest_mem_unmap(self.guest, 0x11000, 4096), 0)
+        for i, width in enumerate((1, 2, 4, 8)):
+            address = 0x11000 if width == 1 else 0x10fff
+            before = self.read(0x10ff8, 8)
+            for target in (0xc001, 0xc101):
+                self.put(R0, address)
+                self.put(LR, 0x9000)
+                self.assertNotEqual(self.lib.guest_run(self.guest, target + 4 * i, 0x9000), 0)
+                self.assertEqual(self.read(0x10ff8, 8), before)
+
+        self.assertEqual(self.lib.guest_mem_protect(self.guest, 0x10000, 4096, 1), 0)
+        for i in range(4):
+            self.put(R0, 0x10003)
+            self.put(LR, 0x9000)
+            before = self.read(0x10003, 8)
+            self.assertNotEqual(self.lib.guest_run(self.guest, 0xc101 + 4 * i, 0x9000), 0)
+            self.assertEqual(self.read(0x10003, 8), before)
 
     def test_architectural_context_restores_flags_and_aliased_fp_registers(self):
         self.put(R0, 123)
@@ -396,6 +481,137 @@ class GuestTests(unittest.TestCase):
         self.execute(0x4001)
         self.assertEqual(self.get(R0), 99)
 
+    def memory_call(self, name, *arguments):
+        self.assertEqual(self.lib.dispatch_add(self.dispatch, 0x3000, name.encode(), 0), 0)
+        for index, value in enumerate(arguments):
+            self.put(R0 + index, value)
+        self.execute(0x3000)
+        return self.get(R0)
+
+    def test_native_bulk_copy_uses_checked_guest_memory_without_a_host_callback(self):
+        self.host(lambda *_: 1)
+        self.assertEqual(self.lib.guest_mem_map(self.guest, 0x10000, 16384, 3), 0)
+        source = bytes(range(256)) * 16
+        self.assertEqual(self.lib.guest_mem_write(self.guest, 0x10003, source, len(source)), 0)
+        for name in ('memcpy', '__aeabi_memcpy'):
+            for size in (7, len(source)):
+                with self.subTest(name=name, size=size):
+                    self.assertEqual(self.lib.guest_mem_write(self.guest, 0x12004, b'X', 1), 0)
+                    self.assertEqual(self.lib.guest_mem_write(self.guest, 0x12005 + size, b'Y', 1), 0)
+                    self.assertEqual(self.memory_call(name, 0x12005, 0x10003, size), 0x12005)
+                    self.assertEqual(self.read(0x12004, size + 2), b'X' + source[:size] + b'Y')
+
+    def test_native_memmove_reads_the_whole_source_before_overlapping_writes(self):
+        self.host(lambda *_: 1)
+        self.assertEqual(self.lib.guest_mem_map(self.guest, 0x10000, 4096, 3), 0)
+        for name in ('memmove', '__aeabi_memmove'):
+            for destination, source, expected in ((0x10002, 0x10000, b'ababcdefgh'),
+                                                   (0x10000, 0x10002, b'cdefghijij')):
+                with self.subTest(name=name, destination=destination):
+                    self.assertEqual(self.lib.guest_mem_write(self.guest, 0x10000, b'abcdefghij', 10), 0)
+                    self.assertEqual(self.memory_call(name, destination, source, 8), destination)
+                    self.assertEqual(self.read(0x10000, 10), expected)
+
+    def test_native_memset_keeps_the_standard_and_arm_argument_orders(self):
+        self.host(lambda *_: 1)
+        self.assertEqual(self.lib.guest_mem_map(self.guest, 0x10000, 8192, 3), 0)
+        for name, arguments, size, value in (
+                ('memset', (0x10003, 0x17f, 7), 7, b'\x7f'),
+                ('__aeabi_memset', (0x10003, 7, 0xfffffffe), 7, b'\xfe'),
+                ('memset', (0x10003, 0x17f, 4096), 4096, b'\x7f'),
+                ('__aeabi_memset', (0x10003, 4096, 0xfffffffe), 4096, b'\xfe')):
+            with self.subTest(name=name, size=size):
+                self.assertEqual(self.memory_call(name, *arguments), 0x10003)
+                self.assertEqual(self.read(0x10003, size), value * size)
+
+    def test_native_arm_clear_aliases_zero_the_requested_length(self):
+        self.host(lambda *_: 1)
+        self.assertEqual(self.lib.guest_mem_map(self.guest, 0x10000, 8192, 3), 0)
+        for name in ('__aeabi_memclr', '__aeabi_memclr4', '__aeabi_memclr8'):
+            for size in (7, 4096):
+                with self.subTest(name=name, size=size):
+                    self.assertEqual(self.lib.guest_mem_write(self.guest, 0x10000, b'X' * (size + 2), size + 2), 0)
+                    self.assertEqual(self.memory_call(name, 0x10001, size), 0x10001)
+                    self.assertEqual(self.read(0x10000, size + 2), b'X' + b'\0' * size + b'X')
+
+    def test_zero_length_bulk_operations_do_not_access_unmapped_pointers(self):
+        self.host(lambda *_: 1)
+        for name, arguments in (
+                ('memcpy', (0xdeadbeef, 0xcafef00d, 0)),
+                ('memmove', (0xdeadbeef, 0xcafef00d, 0)),
+                ('__aeabi_memcpy', (0xdeadbeef, 0xcafef00d, 0)),
+                ('__aeabi_memmove', (0xdeadbeef, 0xcafef00d, 0)),
+                ('memset', (0xdeadbeef, 0x17f, 0)),
+                ('__aeabi_memset', (0xdeadbeef, 0, 0x17f)),
+                ('__aeabi_memclr', (0xdeadbeef, 0)),
+                ('__aeabi_memclr4', (0xdeadbeef, 0)),
+                ('__aeabi_memclr8', (0xdeadbeef, 0))):
+            with self.subTest(name=name):
+                self.assertEqual(self.memory_call(name, *arguments), 0xdeadbeef)
+
+    def test_bulk_size_limit_is_checked_before_allocation_or_guest_access(self):
+        self.host(lambda *_: 1)
+        oversized = (64 << 20) + 1
+        for name, arguments in (
+                ('memcpy', (0xdeadbeef, 0xcafef00d, oversized)),
+                ('memmove', (0xdeadbeef, 0xcafef00d, oversized)),
+                ('__aeabi_memcpy', (0xdeadbeef, 0xcafef00d, oversized)),
+                ('__aeabi_memmove', (0xdeadbeef, 0xcafef00d, oversized)),
+                ('memset', (0xdeadbeef, 0x17f, oversized)),
+                ('__aeabi_memset', (0xdeadbeef, oversized, 0x17f)),
+                ('__aeabi_memclr', (0xdeadbeef, oversized)),
+                ('__aeabi_memclr4', (0xdeadbeef, oversized)),
+                ('__aeabi_memclr8', (0xdeadbeef, oversized))):
+            with self.subTest(name=name):
+                self.lib.dispatch_clear_error(self.dispatch)
+                self.assertEqual(self.lib.dispatch_add(self.dispatch, 0x3000, name.encode(), 0), 0)
+                for index, value in enumerate(arguments):
+                    self.put(R0 + index, value)
+                self.put(LR, 0x9000)
+                self.assertNotEqual(self.lib.guest_run(self.guest, 0x3000, 0x9000), 0)
+                self.assertIn(b'Bulk memory operation exceeds its size limit', self.lib.dispatch_error(self.dispatch))
+
+    def test_failed_bulk_access_leaves_previously_valid_bytes_unchanged(self):
+        self.host(lambda *_: 1)
+        self.assertEqual(self.lib.guest_mem_map(self.guest, 0x10000, 4096, 3), 0)
+        for name, arguments in (('memcpy', (0x10000, 0x10ffe, 4)),
+                                ('memmove', (0x10000, 0x10ffe, 4)),
+                                ('memset', (0x10ffe, 0xff, 4)),
+                                ('__aeabi_memclr', (0x10ffe, 4))):
+            with self.subTest(name=name):
+                self.lib.dispatch_clear_error(self.dispatch)
+                self.assertEqual(self.lib.guest_mem_write(self.guest, 0x10000, b'keep', 4), 0)
+                self.assertEqual(self.lib.guest_mem_write(self.guest, 0x10ffe, b'XY', 2), 0)
+                self.assertEqual(self.lib.dispatch_add(self.dispatch, 0x3000, name.encode(), 0), 0)
+                for index, value in enumerate(arguments):
+                    self.put(R0 + index, value)
+                self.put(LR, 0x9000)
+                self.assertNotEqual(self.lib.guest_run(self.guest, 0x3000, 0x9000), 0)
+                self.assertIn(b'Guest access failed', self.lib.dispatch_error(self.dispatch))
+                self.assertEqual(self.read(0x10000, 4), b'keep')
+                self.assertEqual(self.read(0x10ffe, 2), b'XY')
+
+    def test_native_bulk_writes_preserve_the_previous_png_snapshot(self):
+        self.host(lambda *_: 1)
+        self.assertEqual(self.lib.dispatch_add(self.dispatch, 0x4000, b'capture', 1), 0)
+        self.assertEqual(self.lib.fixture_register_capture(self.dispatch), 0)
+        pointer = self.lib.dispatch_allocate_image(self.dispatch, 0x50000000, 4096)
+        self.assertTrue(pointer)
+        C.c_uint32.from_address(pointer).value = 0x11223344
+        self.put(R0, 0x50000000)
+        self.execute(0x4000)
+        self.assertEqual(self.lib.fixture_snapshot_owned(), 0)
+        self.assertEqual(self.lib.guest_mem_map(self.guest, 0x10000, 4096, 3), 0)
+        self.assertEqual(self.lib.guest_mem_write(self.guest, 0x10000, b'\x88\x77\x66\x55', 4), 0)
+        self.assertEqual(self.memory_call('memcpy', 0x50000000, 0x10000, 4), 0x50000000)
+        self.assertEqual(C.c_uint32.from_address(pointer).value, 0x55667788)
+        self.assertEqual(self.lib.fixture_snapshot(), 0x11223344)
+        self.assertGreater(self.lib.fixture_snapshot_owned(), 0)
+        self.assertEqual(self.memory_call('__aeabi_memclr', 0x50000000, 4), 0x50000000)
+        self.assertEqual(C.c_uint32.from_address(pointer).value, 0)
+        self.assertEqual(self.lib.fixture_snapshot(), 0x11223344)
+        self.assertEqual(self.lib.dispatch_release_image(self.dispatch, 0x50000000), 0)
+
     def test_existing_png_snapshot_detaches_only_when_generated_code_writes(self):
         self.host(lambda *_: 1)
         self.assertEqual(self.lib.dispatch_add(self.dispatch, 0x3000, b'capture', 0), 0)
@@ -413,6 +629,57 @@ class GuestTests(unittest.TestCase):
         self.assertEqual(self.lib.fixture_snapshot(), 0x11223344)
         self.assertGreater(self.lib.fixture_snapshot_owned(), 0)
         self.assertEqual(self.lib.dispatch_release_image(self.dispatch, 0x50000000), 0)
+
+    def hook(self, mask, callback):
+        kind = C.CFUNCTYPE(None, C.c_void_p, C.c_uint64, C.c_uint32, C.c_void_p)
+        function = kind(callback)
+        self.callbacks.append(function)
+        handle = C.c_size_t()
+        self.assertEqual(self.lib.guest_hook_add(self.guest, C.byref(handle), mask,
+                         C.cast(function, C.c_void_p), None, 0x4000, 0x4000), 0)
+        return handle.value
+
+    def test_a_single_block_hook_can_add_the_next_callback(self):
+        seen = []
+        def add(*_):
+            seen.append(1)
+            self.hook(8, lambda *_: seen.append(2))
+        self.hook(8, add)
+        self.execute(0x4001)
+        self.assertEqual(seen, [1, 2])
+
+    def test_hook_masks_keep_block_and_code_registration_order(self):
+        seen = []
+        self.hook(4 | 8, lambda *_: seen.append(1))
+        self.hook(8, lambda *_: seen.append(2))
+        self.hook(4, lambda *_: seen.append(3))
+        self.execute(0x4001)
+        # Dispatch checks code hooks before the translated entry emits block/code events.
+        self.assertEqual(seen, [1, 3, 1, 2, 1, 3])
+
+    def test_stopping_in_a_block_hook_prevents_remaining_callbacks(self):
+        seen = []
+        def stop(*_):
+            seen.append(1)
+            self.assertEqual(self.lib.guest_stop(self.guest), 0)
+        self.hook(8, stop)
+        self.hook(8 | 4, lambda *_: seen.append(2))
+        self.put(LR, 0x9000)
+        self.assertNotEqual(self.lib.guest_run(self.guest, 0x4001, 0x9000), 0)
+        self.assertIn(b'stopped', self.lib.guest_error(self.guest))
+        self.assertEqual(seen, [2, 1])
+
+    def test_deleting_a_future_hook_keeps_later_callbacks_safe(self):
+        program = """
+import ctypes, sys
+lib = ctypes.CDLL(sys.argv[1])
+lib.fixture_delete_future_hook.restype = ctypes.c_uint
+print(lib.fixture_delete_future_hook())
+"""
+        result = subprocess.run([_sys.executable, '-c', program, str(Path(self.directory.name) / 'guest.so')],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '1313', 'a removed callback must not run or hide later callbacks')
 
     def test_budget_stops_generated_loop_and_reports_original_dispatch_error(self):
         self.host(lambda *_: 1)

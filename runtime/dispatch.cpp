@@ -47,6 +47,44 @@ int zero(void *, NativeCall *, NativeResult *result) {
     return 0;
 }
 
+int transfer_memory(NativeCall *call, NativeResult *result, size_t size, uint32_t value, bool fill) {
+    if (size > 64 * 1024 * 1024)
+        throw std::runtime_error("Bulk memory operation exceeds its size limit");
+    const uint32_t destination = call->argument(0);
+    if (size) {
+        uint8_t small[256];
+        std::vector<uint8_t> large;
+        uint8_t *bytes = small;
+        if (size > sizeof small) {
+            large.resize(size);
+            bytes = large.data();
+        }
+        if (fill)
+            std::memset(bytes, int(value & 255), size);
+        else
+            call->read(value, bytes, size);
+        // Reading first handles overlap; NativeCall::write preserves PNG snapshots.
+        call->write(destination, bytes, size);
+    }
+    result->value = destination;
+    result->flags = 1;
+    return 0;
+}
+
+int copy_memory(void *, NativeCall *call, NativeResult *result) {
+    return transfer_memory(call, result, call->argument(2), call->argument(1), false);
+}
+
+int fill_memory(void *, NativeCall *call, NativeResult *result) {
+    const bool standard = std::strcmp(call->name, "memset") == 0;
+    return transfer_memory(call, result, call->argument(standard ? 2 : 1),
+                           call->argument(standard ? 1 : 2), true);
+}
+
+int clear_memory(void *, NativeCall *call, NativeResult *result) {
+    return transfer_memory(call, result, call->argument(1), 0, true);
+}
+
 int single_math(void *, NativeCall *call, NativeResult *result) {
     uint32_t bits = call->argument(0);
     float input;
@@ -165,6 +203,12 @@ extern "C" void *dispatch_create(void *guest, const GuestApi *api, int type, int
             dispatch->handlers.emplace(name, Binding{zero, nullptr});
         for (const char *name : {"roundf", "sinf", "cosf"})
             dispatch->handlers.emplace(name, Binding{single_math, nullptr});
+        for (const char *name : {"memcpy", "memmove", "__aeabi_memcpy", "__aeabi_memmove"})
+            dispatch->handlers.emplace(name, Binding{copy_memory, nullptr});
+        for (const char *name : {"memset", "__aeabi_memset"})
+            dispatch->handlers.emplace(name, Binding{fill_memory, nullptr});
+        for (const char *name : {"__aeabi_memclr", "__aeabi_memclr4", "__aeabi_memclr8"})
+            dispatch->handlers.emplace(name, Binding{clear_memory, nullptr});
         return dispatch.release();
     } catch (...) {
         return nullptr;
