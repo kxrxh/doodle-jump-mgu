@@ -42,6 +42,32 @@ fn touch_release_and_cursor_position_reach_separate_frames() {
 }
 
 #[test]
+fn game_touches_keep_their_release_when_crossing_into_either_side_panel() {
+    for (x, edge) in [(700.0, 0.0), (1220.0, 544.0)] {
+        let mut c = Controls::new();
+        c.touch(1, 960.0, 300.0, PLACE, true, 0.0);
+        assert_eq!(c.take(true, 0.0), (0.0, vec![[0.0, 0.0, 272.0, 400.0]]));
+        c.touch(2, x, 300.0, PLACE, true, 17.0);
+        assert_eq!(c.take(true, 17.0), (0.0, vec![[0.0, 1.0, edge, 400.0]]));
+        c.touch(3, x, 300.0, PLACE, true, 34.0);
+        assert_eq!(c.take(true, 34.0), (0.0, vec![[0.0, 2.0, edge, 400.0]]));
+        c.touch(3, x, 300.0, PLACE, true, 51.0);
+        assert!(c.take(true, 51.0).1.is_empty());
+    }
+}
+
+#[test]
+fn side_panel_touches_keep_steering_until_released_inside_the_game() {
+    let mut c = Controls::new();
+    c.touch(1, 20.0, 300.0, PLACE, true, 0.0);
+    assert_eq!(c.take(true, 0.0), (-1.0, vec![]));
+    c.touch(2, 960.0, 300.0, PLACE, true, 17.0);
+    assert_eq!(c.take(true, 17.0), (-1.0, vec![]));
+    c.touch(3, 960.0, 300.0, PLACE, true, 34.0);
+    assert_eq!(c.take(true, 34.0), (0.0, vec![]));
+}
+
+#[test]
 fn menu_transition_and_pause_clear_queued_ring_steering() {
     let mut c = Controls::new();
     c.observe(0.0);

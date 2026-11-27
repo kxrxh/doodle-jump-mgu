@@ -31,11 +31,38 @@ fn resuming_discards_time_spent_hidden() {
 }
 
 #[test]
+fn parked_only_waits_for_speed_before_starting() {
+    let now = Instant::now();
+    let mut s = session(now);
+    s.ui.shown = true;
+    s.ui.focused = true;
+    assert!(!s.wants_run(now));
+    s.ui.parked_only = false;
+    assert!(s.wants_run(now));
+}
+
+#[test]
+fn parked_only_expires_speed_independently_of_ui_heartbeats() {
+    let now = Instant::now();
+    let mut s = session(now);
+    s.ui.shown = true;
+    s.ui.focused = true;
+    s.speed = Some((0., now));
+    s.ui_at = now + Duration::from_millis(5999);
+    assert!(s.wants_run(s.ui_at));
+    s.ui_at = now + Duration::from_secs(6);
+    assert!(!s.wants_run(s.ui_at));
+    s.speed = Some((0., s.ui_at));
+    assert!(s.wants_run(s.ui_at));
+}
+
+#[test]
 fn focus_visibility_driving_dialogs_and_stale_parent_each_stop_the_game() {
     let now = Instant::now();
     let mut s = session(now);
     s.ui.shown = true;
     s.ui.focused = true;
+    s.speed = Some((0., now));
     assert!(s.wants_run(now));
     s.ui.shown = false;
     assert!(!s.wants_run(now));
@@ -43,7 +70,7 @@ fn focus_visibility_driving_dialogs_and_stale_parent_each_stop_the_game() {
     s.ui.focused = false;
     assert!(!s.wants_run(now));
     s.ui.focused = true;
-    s.speed = Some(4.);
+    s.speed = Some((4., now));
     assert!(!s.wants_run(now));
     s.ui.parked_only = false;
     assert!(s.wants_run(now));

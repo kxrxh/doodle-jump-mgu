@@ -23,6 +23,8 @@ use runner::run_inner;
 
 const BIND_RETRY_DELAY: Duration = Duration::from_millis(1500);
 const PERIOD: Duration = Duration::from_nanos(16_666_667);
+// Vehicle speed is polled every two seconds; tolerate two missed polls.
+const SPEED_MAX_AGE: Duration = Duration::from_secs(6);
 const HELP: &str = "Ring / joystick: steer. Joystick: move menu cursor. Press: select / shoot. Touch sides: hold to steer; touch game: shoot / select.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,7 +141,7 @@ struct Session {
     ui_at: Instant,
     running: bool,
     gated: bool,
-    speed: Option<f64>,
+    speed: Option<(f64, Instant)>,
     dialogs: BTreeSet<u32>,
     failure: Option<String>,
     controls: Controls,
@@ -214,13 +216,23 @@ impl Session {
             last_info: String::new(),
         }
     }
-    fn moving(&self) -> bool {
-        self.ui.parked_only && self.speed.is_some_and(|s| s > 3.)
+    fn parked_only_reason(&self, now: Instant) -> Option<&'static str> {
+        if !self.ui.parked_only {
+            return None;
+        }
+        match self
+            .speed
+            .filter(|(_, at)| now.saturating_duration_since(*at) < SPEED_MAX_AGE)
+        {
+            None => Some("Parked only: waiting for a current vehicle speed."),
+            Some((speed, _)) if speed > 3. => Some("Parked only: the game waits while driving."),
+            _ => None,
+        }
     }
     fn wants_run(&self, now: Instant) -> bool {
         self.ui.shown
             && self.ui.focused
-            && !self.moving()
+            && self.parked_only_reason(now).is_none()
             && self.dialogs.is_empty()
             && self.failure.is_none()
             && now.saturating_duration_since(self.ui_at) < Duration::from_secs(2)
@@ -242,17 +254,18 @@ impl Session {
             self.dirty = true;
             host.action(if wanted { "resume" } else { "pause" })?;
         }
+        let parked = self.parked_only_reason(now);
         let info = if let Some(error) = &self.failure {
             format!("Engine stopped: {error}")
-        } else if self.moving() {
-            "Parked only: the game waits while driving.".into()
+        } else if let Some(reason) = parked {
+            reason.into()
         } else {
             HELP.into()
         };
         if changed || info != self.last_info {
             self.last_info = info.clone();
             let mut event = json!({"type":"lifecycle","running":self.running,"info":info});
-            if !self.running && self.ui.shown && self.moving() {
+            if !self.running && self.ui.shown && parked.is_some() {
                 event["open"] = json!("MAIN");
             }
             host::event(out, event)?;

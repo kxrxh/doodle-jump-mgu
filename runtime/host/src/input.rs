@@ -163,7 +163,7 @@ impl Controls {
         let (sx, sy) = (x * place.scale + place.ox, y * place.scale + place.oy);
         let gw = place.h * 544.0 / 960.0;
         let gx = (place.w - gw) / 2.0;
-        if playing && (sx < gx || sx > gx + gw) {
+        if playing && (sx < gx || sx > gx + gw) && (phase == 1 || self.finger == Finger::Steer) {
             if phase == 3 {
                 self.tilt = 0.0;
                 self.finger = Finger::None;

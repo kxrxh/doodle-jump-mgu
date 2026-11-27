@@ -7,6 +7,42 @@ from session_fixture import NativeSession
 
 
 class SessionTests(unittest.TestCase):
+    def test_parked_only_rejects_invalid_speed_and_recovers(self):
+        with NativeSession() as session:
+            session.send(vehicle=dict(speedVehicleCentreOfGravity=0))
+            session.set_ui(parkedOnly=True)
+            session.wait_event('lifecycle', lambda value: value['running'])
+            for vehicle in ({'speedVehicleCentreOfGravity': 65535},
+                            {'speedVehicleCentreOfGravity': -1},
+                            {'speedVehicleCentreOfGravity': 65536},
+                            {'speedVehicleCentreOfGravity': None},
+                            {'speedVehicleCentreOfGravity': '0'}, {}):
+                with self.subTest(vehicle=vehicle):
+                    session.send(vehicle=vehicle)
+                    paused = session.wait_event('lifecycle', lambda value: not value['running'], timeout=2)
+                    self.assertIn('speed', paused['info'])
+                    self.assertEqual(paused.get('open'), 'MAIN')
+                    steps = session.wait_event('draw')['steps']
+                    session.pump_for(.2)
+                    self.assertEqual(session.wait_event('draw')['steps'], steps)
+                    session.send(vehicle=dict(speedVehicleCentreOfGravity=0))
+                    session.wait_event('lifecycle', lambda value: value['running'])
+                    session.wait_event('draw', lambda value: value['steps'] > steps)
+
+    def test_parked_only_expires_speed_while_ui_heartbeats_continue(self):
+        with NativeSession() as session:
+            session.send(vehicle=dict(speedVehicleCentreOfGravity=0))
+            session.set_ui(parkedOnly=True)
+            session.wait_event('lifecycle', lambda value: value['running'])
+            paused = session.wait_event('lifecycle', lambda value: not value['running'], timeout=8)
+            self.assertIn('speed', paused['info'])
+            steps = session.wait_event('draw')['steps']
+            session.pump_for(.2)
+            self.assertEqual(session.wait_event('draw')['steps'], steps)
+            session.send(vehicle=dict(speedVehicleCentreOfGravity=0))
+            session.wait_event('lifecycle', lambda value: value['running'])
+            session.wait_event('draw', lambda value: value['steps'] > steps)
+
     def test_frames_are_scheduled_without_javascript_frame_requests(self):
         with NativeSession() as session:
             session.set_ui()
@@ -221,6 +257,7 @@ class SessionTests(unittest.TestCase):
                 session.set_ui(**{field: True})
                 session.wait_event('lifecycle', lambda value: value['running'])
                 session.pump_until(lambda: len(session.gpu.frames) > before)
+            session.send(vehicle=dict(speedVehicleCentreOfGravity=0))
             session.set_ui(parkedOnly=True)
             session.send(vehicle=dict(speedVehicleCentreOfGravity=640))
             parked = session.wait_event('lifecycle', lambda value: not value['running'])

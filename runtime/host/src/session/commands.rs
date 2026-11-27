@@ -33,12 +33,11 @@ impl Session {
             self.ui_at = now;
             self.dirty = true;
         }
-        if let Some(vehicle) = command.get("vehicle")
-            && let Some(raw) = vehicle["speedVehicleCentreOfGravity"]
+        if let Some(vehicle) = command.get("vehicle") {
+            self.speed = vehicle["speedVehicleCentreOfGravity"]
                 .as_f64()
-                .filter(|n| n.is_finite() && *n != 65535.)
-        {
-            self.speed = Some(raw * 0.015625);
+                .filter(|n| n.is_finite() && (0. ..65535.).contains(n))
+                .map(|raw| (raw * 0.015625, now));
         }
         if let Some(ccu) = command.get("ccu") {
             let signal = ccu["source"] == "signal";

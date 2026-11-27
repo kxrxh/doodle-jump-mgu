@@ -21,6 +21,9 @@ To update, use **Check now**, then open **Installed → Doodle Jump** and choose
 
 Touch controls work without extra tools. iDrive controller support depends on your setup.
 
+With **Parked only** enabled, the game also pauses when vehicle speed is missing,
+invalid, or six seconds old. Turn this setting off for the local preview.
+
 Enable **Show FPS** in the main menu to check performance. **Native** counts frames presented by the compositor.
 
 ![Gameplay](docs/screenshots/gameplay.png)
