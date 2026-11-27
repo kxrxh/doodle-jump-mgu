@@ -53,7 +53,6 @@ class CompiledFixture:
         self.lifter = lifter = Lifter()
         self.jump_stubs = (symbols['setjmp_stub'], symbols['longjmp_stub']) if restore_callbacks else (0,0)
         lifter.link_base = ADDRESS
-        lifter.starts = {ADDRESS + start for start in starts}
         lifter.image = self.code
         lifter.ro_range = (ADDRESS, ADDRESS + len(self.code))
         parts = []

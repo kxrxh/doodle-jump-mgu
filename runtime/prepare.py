@@ -10,7 +10,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parent
 PROJECT = ROOT.parent
 BUNDLE = ROOT / 'bundle'
-IMAGE = 'ubuntu:18.04@sha256:152dc042452c496007f07ca9127571cb9c29697f42acbfad72324b2bb2e43c98'
 HOST = PROJECT / '.cache/rust-host/target/release/doodle-host'
 
 
@@ -31,16 +30,10 @@ def licenses(destination):
     shutil.copy2(rust / 'COPYRIGHT-library.html', standard)
     shutil.copytree(rust / 'licenses', standard / 'licenses')
     sys.path.insert(0, str(PROJECT / 'tools'))
-    from build_host import prepare_certificates
+    from build_host import cargo_in_docker, prepare_certificates
     prepare_certificates()
-    environment = [
-        '-e', 'PATH=/work/.cache/rust-host/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-        '-e', 'CARGO_HOME=/work/.cache/rust-host/cargo',
-        '-e', 'CARGO_HTTP_CAINFO=/work/.cache/rust-host/cacert.pem',
-    ]
-    metadata = subprocess.run(['docker', 'run', '--rm', '--platform', 'linux/amd64',
-        '-v', f'{PROJECT}:/work', '-w', '/work/runtime/host', *environment,
-        'doodle-recomp-target', 'cargo', 'metadata', '--locked', '--format-version', '1'],
+    metadata = subprocess.run(
+        cargo_in_docker('metadata', '--locked', '--format-version', '1'),
         stdout=subprocess.PIPE, text=True, check=True)
     packages = json.loads(metadata.stdout)['packages']
     notices = []
@@ -84,7 +77,6 @@ def pack_bundle(host=HOST):
         shutil.copy2(ROOT / 'assets/cursor.png', stage / 'assets/cursor.png')
         licenses(stage / 'licenses')
         shutil.copy2(ROOT / 'bundle.packignore', stage / '.packignore')
-        # Staging retains the libraries before replacing the old Python bundle.
         shutil.rmtree(BUNDLE)
         stage.rename(BUNDLE)
     spec = importlib.util.spec_from_file_location('pack_data', PROJECT / 'kit/tools/pack_data.py')
@@ -104,19 +96,12 @@ def main():
     generated = ROOT / 'data/recomp-build'
     shutil.rmtree(generated, ignore_errors=True)
     sys.path.insert(0, str(PROJECT / 'tools'))
+    from build_host import docker
     from recompile import PROFILE, generate
     generate(original, generated, PROFILE, container=True)
     shutil.rmtree(BUNDLE, ignore_errors=True)
     (BUNDLE / 'recomp').mkdir(parents=True)
-    command = ['docker', 'run', '--rm', '--platform', 'linux/amd64',
-               '-v', f'{ROOT}:/work', '-w', '/work', IMAGE]
-    subprocess.run(command+['bash','-ec',r'''
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends gcc g++ make libc6-dev >data/build-toolchain.log 2>&1 || {
-    cat data/build-toolchain.log
-    exit 1
-}
+    subprocess.run(docker('bash', '-ec', r'''
 cc -c -fPIC -O3 raster.c -o data/raster.o
 g++ -std=c++14 -shared -fPIC -O3 -pthread -static-libstdc++ -static-libgcc \
     dispatch.cpp image_memory.cpp graphics.cpp audio.cpp frame.cpp raster_parallel.cpp data/raster.o -o bundle/native.so
@@ -129,7 +114,7 @@ g++ -std=c++14 -fPIC -fexceptions -fno-strict-aliasing -ffp-contract=off -O2 \
     -Idata/recomp-build -Irecomp/guest -c recomp/guest/guest.cpp -o data/recomp-build/guest.o
 g++ -shared -static-libstdc++ -static-libgcc data/recomp-build/*.o -lm -o bundle/recomp/game.so
 strip --strip-unneeded bundle/recomp/game.so
-'''],check=True)
+''', work='/work/runtime'), check=True)
     subprocess.run([sys.executable, str(PROJECT / 'tools/build_host.py')], check=True)
     pack_bundle()
 

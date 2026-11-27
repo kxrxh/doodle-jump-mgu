@@ -22,7 +22,6 @@ class ElfImage:
         self.functions = {}
         self.segments = []
         self.sections = []
-        self.relocations = set()
         self.noreturn = set()
         self.unwind_entries = 0
         starts = {}
@@ -40,8 +39,6 @@ class ElfImage:
             for section in elf.iter_sections():
                 if section['sh_flags'] & 4:
                     self.sections.append((base + section['sh_addr'], section['sh_size'], section.name))
-                if section['sh_type'] in ('SHT_REL', 'SHT_RELA'):
-                    self.relocations.update(base + r['r_offset'] for r in section.iter_relocations())
             dynamic = elf.get_section_by_name('.dynsym')
             if dynamic is None:
                 raise ValueError('ELF dynamic symbols are missing')

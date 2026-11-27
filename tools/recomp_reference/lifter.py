@@ -89,13 +89,6 @@ class Lifter:
             md.detail = True
             self.md[thumb] = md
         self.unsupported: collections.Counter = collections.Counter()
-        # Which form was responsible for breaking how many *functions*. Late in
-        # the tail, how widely a form is spread matters far more than how often
-        # it occurs: on the ARM64 side, PC-relative literal loads were a tenth
-        # of a percent of instructions and seven points of function
-        # completeness, because they appear about once per function.
-        self.blamed: collections.Counter = collections.Counter()
-        self.starts: set[int] = set()
         self.referenced: set[int] = set()
         self.noreturn: set[int] = set()
         self.continuations: dict[int, tuple[int, bool]] = {}
@@ -112,7 +105,6 @@ class Lifter:
         # the address of the load that reads them. Filled by reachable(),
         # which is the pass that has to follow them anyway.
         self.tables: dict[int, list[int]] = {}
-        self.folded = 0
         self._body = b""
         self._body_address = 0
         self._missing = set()
@@ -644,7 +636,6 @@ class Lifter:
             if value is not None:
                 if signed and value >> (size * 8 - 1):
                     value -= 1 << (size * 8)
-                self.folded += 1
                 return self.write(rt[0], f"{value & 0xFFFFFFFF:#x}u")
         # The address goes into a temporary before anything is written back or
         # loaded. A load pair whose base register is also its first destination
@@ -813,7 +804,6 @@ class Lifter:
         if op == "vldr":
             value = self.pc_literal(ins, 1, 4 if kind == "s" else 8)
             if value is not None:
-                self.folded += 1
                 view = "SU" if kind == "s" else "DU"
                 suffix = "u" if kind == "s" else "ull"
                 return f"ARC_{view}(c, {idx}) = {value:#x}{suffix};"
@@ -1394,7 +1384,6 @@ class Lifter:
         complete = not self._missing
         if self._missing:
             self.unsupported['undecodable reachable instruction'] += len(self._missing)
-            self.blamed['undecodable reachable instruction'] += 1
         for i, a in enumerate(order):
             ins = insns[a]
             self.insns_total += 1
@@ -1408,8 +1397,6 @@ class Lifter:
             except Unsupported as why:
                 key = str(why)
                 self.unsupported[key] += 1
-                if complete:
-                    self.blamed[key] += 1
                 complete = False
                 code = f'arc_trap(c, "{self.name(addr)}: {text}");'
             lines.append(f"  /* {a:08x}  {text} */")

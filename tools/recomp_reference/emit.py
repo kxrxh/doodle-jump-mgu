@@ -74,7 +74,6 @@ def discover(image):
         if not changed:
             break
     image.discovery_converged = not changed
-    image.discovered_entries = set(known)
 
 
 def helpers():
@@ -100,7 +99,6 @@ def generate(original, output, profile=None):
     lifter = Lifter()
     lifter.noreturn = image.noreturn
     lifter.link_base = image.base
-    lifter.starts = {function.address for function in functions}
     bodies = []
     for function in functions:
         if function.section == 'helpers':
