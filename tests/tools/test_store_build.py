@@ -3,23 +3,11 @@ import importlib
 import io
 import json
 from pathlib import Path
-import struct
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 import zipfile
-import zlib
-
-
-def pack(files):
-    blob=bytearray();index={}
-    for name,value in files.items():
-        compressor=zlib.compressobj(wbits=-15)
-        data=compressor.compress(value)+compressor.flush()
-        index[name]=[len(blob),len(data)];blob.extend(data)
-    compressor=zlib.compressobj(wbits=-15)
-    data=compressor.compress(json.dumps({'files':index,'split':{}}).encode())+compressor.flush()
-    return b'MGUPACK1'+struct.pack('<I',len(data))+data+blob
 
 
 class StoreBuildTests(unittest.TestCase):
@@ -27,32 +15,35 @@ class StoreBuildTests(unittest.TestCase):
         try:return importlib.import_module('store_build')
         except ModuleNotFoundError:self.fail('The Store install build is missing')
 
-    def test_install_combines_runtime_and_game_without_shop_assets(self):
+    def test_release_engine_is_copied_without_unpacking_game_files(self):
         build=self.module()
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk';out=root/'engine.pack'
-            runtime_files={'doodle-host':b'prebuilt x86-64 host','native.so':b'native graphics and audio',
-                           'recomp/game.so':b'x86-64 module','recomp/LICENSE':b'original MIT notice'}
-            runtime.write_bytes(pack(runtime_files))
-            kept={'assets/paper_L.png':b'paper','assets/fonts/doodlejumpfont_X.png':b'font',
-                  'assets/Atlases/tutorial_X.atlas':b'atlas','assets/ninja/game_L.png':b'ninja',
-                  'assets/jump.ogg':b'sound','lib/armeabi-v7a/libDoodleJump.so':b'engine'}
-            with zipfile.ZipFile(apk,'w') as archive:
-                for name,value in {**kept,'assets/paper_X.png':b'high resolution',
-                        'assets/ninja/game_X.png':b'high resolution ninja','assets/store/banner.png':b'shop',
-                        'assets/popups/game-over-plush_L.png':b'ad',
-                        'classes.dex':b'android'}.items():archive.writestr(name,value)
-            build.assemble(runtime,apk,out)
-            data=out.read_bytes();n=struct.unpack_from('<I',data,8)[0];base=12+n
-            files=json.loads(zlib.decompress(data[12:base],-15))['files']
-            self.assertEqual(set(files),set(runtime_files)|{'original/inventory.json'}|
-                             {'original/extracted/'+name for name in kept})
-            for name,value in runtime_files.items():
-                off,size=files[name]
-                self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),value)
-            for name,value in kept.items():
-                off,size=files['original/extracted/'+name]
-                self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),value)
+            root=Path(directory);package=root/'app.tgz';out=root/'engine.pack'
+            with tarfile.open(package,'w:gz') as archive:
+                entry=tarfile.TarInfo('package/javascript/engine.pack')
+                entry.size=len(b'released engine')
+                archive.addfile(entry,io.BytesIO(b'released engine'))
+                entry=tarfile.TarInfo('../../outside')
+                entry.size=3
+                archive.addfile(entry,io.BytesIO(b'bad'))
+            build.extract_engine(package,out)
+            self.assertEqual(out.read_bytes(),b'released engine')
+            self.assertFalse((root.parent/'outside').exists())
+
+    def test_invalid_release_preserves_existing_engine(self):
+        build=self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);package=root/'app.tgz';out=root/'engine.pack'
+            out.write_bytes(b'existing engine')
+            with tarfile.open(package,'w:gz') as archive:
+                entry=tarfile.TarInfo('package/javascript/engine.pack')
+                entry.type=tarfile.SYMTYPE
+                entry.linkname='/etc/passwd'
+                archive.addfile(entry)
+            with self.assertRaisesRegex(ValueError,'regular engine pack'):
+                build.extract_engine(package,out)
+            self.assertEqual(out.read_bytes(),b'existing engine')
+            self.assertFalse(out.with_suffix('.tmp').exists())
 
     def test_local_extraction_omits_extra_x_images_without_dropping_themes_or_sound(self):
         original=importlib.import_module('get_original')
@@ -71,28 +62,10 @@ class StoreBuildTests(unittest.TestCase):
             self.assertEqual({file.relative_to(extracted).as_posix():file.read_bytes()
                               for file in extracted.rglob('*') if file.is_file()},kept)
 
-    def test_release_host_replaces_the_base_runtime_host(self):
-        build=self.module()
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk';out=root/'engine.pack'
-            runtime.write_bytes(pack({'doodle-host':b'base host','native.so':b'base library'}))
-            with zipfile.ZipFile(apk,'w'):
-                pass
-            build.assemble(runtime,apk,out,host=b'updated host')
-            data=out.read_bytes();size=struct.unpack_from('<I',data,8)[0];base=12+size
-            files=json.loads(zlib.decompress(data[12:base],-15))['files']
-            for name,value in {'doodle-host':b'updated host','native.so':b'base library'}.items():
-                off,size=files[name]
-                self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),value)
-
     def test_zip_paths_cannot_escape_the_game_directory(self):
         build=self.module()
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk'
-            runtime.write_bytes(pack({'doodle-host':b'prebuilt host'}))
-            with zipfile.ZipFile(apk,'w') as archive:archive.writestr('assets/../../outside',b'bad')
-            with self.assertRaisesRegex(ValueError,'path'):build.assemble(runtime,apk,root/'engine.pack')
-            self.assertFalse((root.parent/'outside').exists())
+        with self.assertRaisesRegex(ValueError,'path'):
+            build.include_game_file('assets/../../outside')
 
     def test_download_checks_digest_before_replacing_a_cached_file(self):
         build=self.module()

@@ -29,10 +29,9 @@ To package the pinned release runtime, install Python 3 and run:
 python3 tools/store_build.py kxrxh_doodle_jump
 ```
 
-This verifies the base runtime, host update and original game downloads and creates
-`dist/kxrxh_doodle_jump@<version>.tgz`. Store installs that ready package.
-For the **Tags** channel, Store runs the same build on the MGU using
-`mgu-repo.json`.
+This verifies the released app pinned in `tools/runtime.json`, reuses its engine,
+and packages the current app source as `dist/kxrxh_doodle_jump@<version>.tgz`.
+Publish that package and update the Store Releases catalog.
 
 For source development, install Python 3.12+, Node.js, Docker and clang, then run:
 
@@ -61,8 +60,9 @@ The build scripts fetch a verified Rust SDK and miniaudio sources. During the
 off-device build, the Rust translator emits C from the ARM library. The generated
 C and the C++ guest bridge compile into `recomp/game.so` against glibc 2.27.
 The build produces `dist/runtime-linux-x86_64.pack` with licenses and excludes
-Python, Unicorn, Cargo and build sources. Update the URL,
-size and SHA-256 in `tools/runtime.json` before packaging a new release.
+Python, Unicorn, Cargo and build sources. After publishing an updated app package,
+its URL, size and SHA-256 can be pinned in `tools/runtime.json` for subsequent
+app builds.
 
 The ARM library supplies original data; translated game logic runs as x86-64
 code in `recomp/game.so`. All 12 themes and original sound assets are retained.
@@ -130,11 +130,6 @@ Upload app/runtime artifacts to a versioned GitHub Release. Update `catalog.json
 with the verified artifact URL, size and SHA-256, then replace the `catalog`
 release's catalog. Retain required licenses and corresponding GPU worker sources.
 Keep BMW's SDK out of packages.
-
-To build the host archive used by the Store source build, run
-`python3 tools/build_app_patch.py <v0.14.1-app.tgz> <doodle-host> <runtime-licenses>`.
-Publish the archive as a GitHub release asset and pin it in `tools/runtime.json`
-before tagging the app version for Store.
 
 For performance diagnosis, enable **Show FPS**. **Game** measures completed engine
 frames; **Render** measures renderer frames; **Native** counts compositor callbacks.

@@ -1,16 +1,12 @@
 """Build the app in mgu-store's network-enabled source sandbox."""
 import hashlib
-import io
 import json
 from pathlib import Path, PurePosixPath
 import shutil
-import struct
 import subprocess
 import sys
 import tarfile
 import urllib.request
-import zipfile
-import zlib
 
 ROOT=Path(__file__).resolve().parent.parent
 APK_URL='https://cdn.didagame.com/20221115/doodle_jump_3.10.0_3910006.apk'
@@ -56,55 +52,15 @@ def include_game_file(name):
         not name.endswith('_X.png') or name=='assets/fonts/doodlejumpfont_X.png')
 
 
-def assemble(runtime,apk,destination,host=None):
+def extract_engine(package,destination):
     destination.parent.mkdir(parents=True,exist_ok=True)
     temporary=destination.with_suffix('.tmp')
-    reserve=CHUNK
     try:
-        with runtime.open('rb') as source,temporary.open('w+b') as output:
-            header=source.read(12)
-            if len(header)!=12 or header[:8]!=b'MGUPACK1':raise ValueError('Invalid runtime pack')
-            size=struct.unpack_from('<I',header,8)[0]
-            if not 0<size<CHUNK:raise ValueError('Invalid runtime index')
-            runtime_index=json.loads(zlib.decompress(source.read(size),-15))['files']
-            source_base=12+size
-            payload=runtime.stat().st_size-12-size
-            index={}
-            output.seek(reserve)
-            for name,part in runtime_index.items():
-                safe_path(name)
-                if name.startswith('original/') or len(part)!=2 or any(type(n)is not int or n<0 for n in part) or sum(part)>payload:
-                    raise ValueError('Invalid runtime pack entry')
-                if name=='doodle-host' and host is not None:continue
-                offset,length=part
-                source.seek(source_base+offset)
-                index[name]=[output.tell()-reserve,length]
-                output.write(source.read(length))
-
-            def append(name,stream):
-                begin=output.tell();compressor=zlib.compressobj(9,zlib.DEFLATED,-15)
-                for chunk in iter(lambda:stream.read(CHUNK),b''):output.write(compressor.compress(chunk))
-                output.write(compressor.flush())
-                index[name]=[begin-reserve,output.tell()-begin]
-
-            if host is not None:append('doodle-host',io.BytesIO(host))
-            with zipfile.ZipFile(apk) as archive:
-                for info in sorted(archive.infolist(),key=lambda item:item.filename):
-                    name=info.filename
-                    if info.is_dir() or not include_game_file(name):continue
-                    with archive.open(info) as data:append('original/extracted/'+name,data)
-            append('original/inventory.json',io.BytesIO(json.dumps({'url':APK_URL,'sha256':APK_SHA256}).encode()))
-            payload=output.tell()-reserve
-            compressor=zlib.compressobj(9,zlib.DEFLATED,-15)
-            raw=json.dumps({'files':index,'split':{}},sort_keys=True,separators=(',',':')).encode()
-            encoded=compressor.compress(raw)+compressor.flush();base=12+len(encoded)
-            if base>reserve:raise ValueError('Engine index exceeds its reserved space')
-            # Move the payload in place: a second 80 MB file would exceed the Store's build quota.
-            for offset in range(0,payload,CHUNK):
-                output.seek(reserve+offset);chunk=output.read(min(CHUNK,payload-offset))
-                output.seek(base+offset);output.write(chunk)
-            output.truncate(base+payload);output.seek(0)
-            output.write(b'MGUPACK1'+struct.pack('<I',len(encoded))+encoded)
+        with tarfile.open(package,'r:gz') as archive:
+            entry=archive.getmember('package/javascript/engine.pack')
+            if not entry.isfile():raise ValueError('Expected a regular engine pack')
+            with archive.extractfile(entry) as source,temporary.open('wb') as output:
+                shutil.copyfileobj(source,output,CHUNK)
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -116,14 +72,9 @@ def main():
     app=ROOT/'apps'/app_id
     if not (app/'app.json').is_file():raise ValueError('App manifest not found')
     config=json.loads((ROOT/'tools/runtime.json').read_text())
-    runtime=download(config['url'],config['sha256'],ROOT/'.cache/runtime.pack')
-    patch=config['host_patch']
-    update=download(patch['url'],patch['sha256'],ROOT/'.cache/host-update.tar.gz')
-    with tarfile.open(update,'r:gz') as archive:
-        host=archive.extractfile(patch['member']).read()
-    apk=download(APK_URL,APK_SHA256,ROOT/'.cache/original.apk')
-    assemble(runtime,apk,app/'engine.pack',host=host)
-    runtime.unlink();update.unlink();apk.unlink()
+    package=download(config['url'],config['sha256'],ROOT/'.cache/released-app.tgz')
+    extract_engine(package,app/'engine.pack')
+    package.unlink()
     for name in ('LICENSE','NOTICE'):shutil.copy2(ROOT/name,app/name)
     subprocess.run([sys.executable,str(ROOT/'kit/tools/build.py'),app_id],cwd=ROOT,check=True)
 
