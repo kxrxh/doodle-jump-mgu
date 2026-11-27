@@ -115,6 +115,7 @@ static int context_open(struct context *c) {
         EGLDisplay display = platform ? platform(EGL_PLATFORM_WAYLAND_EXT, c->wayland, NULL) :
                                        eglGetDisplay((EGLNativeDisplayType)c->wayland);
         if (!context_display(c, display, 1)) return 0;
+        fprintf(stderr, "GPU worker Wayland EGL initialization failed (0x%x)\n", eglGetError());
         context_close(c);
     }
     if (platform && !context_display(c, platform(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL), 0)) return 0;
@@ -156,18 +157,31 @@ static int bind_presenter(struct client *c) {
     if (rectangle[2] < 16 || rectangle[3] < 16 || rectangle[2] > 4096 || rectangle[3] > 4096) return -1;
     present_free(&c->presenter);
     c->native = 0;
+    const char *reason = "wayland_unavailable";
     if (c->context->wayland) {
+        reason = "presenter_unavailable";
         c->presenter = present_create(c->context->wayland, c->context->display,
             c->context->context, c->context->config, c->context->surface);
-        if (c->presenter && !present_bind(c->presenter, (char *)c->payload + 16, rectangle)) {
-            c->native = c->used_native = 1;
-            c->view[0] = c->view[1] = c->view[4] = 0;
-            c->view[2] = OUTPUT_WIDTH; c->view[3] = OUTPUT_HEIGHT;
-            video_free(&c->video);
-        } else present_free(&c->presenter);
+        if (c->presenter) {
+            int result = present_bind(c->presenter, (char *)c->payload + 16, rectangle);
+            if (!result) {
+                c->native = c->used_native = 1;
+                c->view[0] = c->view[1] = c->view[4] = 0;
+                c->view[2] = OUTPUT_WIDTH; c->view[3] = OUTPUT_HEIGHT;
+                video_free(&c->video);
+                const char response[] = "{\"event\":\"bind\",\"native\":true}\n";
+                return reply(c, response, (int)sizeof response - 1);
+            }
+            reason = result == PRESENT_BIND_RENDERER_UNAVAILABLE ? "renderer_unavailable" :
+                     result == PRESENT_BIND_LAYER_NOT_READY ? "layer_not_ready" : "bind_failed";
+            fprintf(stderr, "GPU native bind: %s\n", present_error(c->presenter));
+            present_free(&c->presenter);
+        }
     }
-    const char *response = c->native ? "{\"event\":\"bind\",\"native\":true}\n" : "{\"event\":\"bind\",\"native\":false}\n";
-    return reply(c, response, (int)strlen(response));
+    char response[128];
+    int size = snprintf(response, sizeof response,
+        "{\"event\":\"bind\",\"native\":false,\"reason\":\"%s\"}\n", reason);
+    return size > 0 && (size_t)size < sizeof response ? reply(c, response, size) : -1;
 }
 static int configure_view(struct client *c) {
     if (c->length != sizeof c->view) return -1;
@@ -328,6 +342,9 @@ int main(int argc, char **argv) {
         if (socket_path) unlink(socket_path);
         return 1;
     }
+    const char *renderer = (const char *)glGetString(GL_RENDERER);
+    fprintf(stderr, "GPU worker EGL: %s, renderer: %s\n",
+        context.wayland ? "Wayland" : "surfaceless", renderer ? renderer : "unknown");
     if (scene_init() < 0) {
         fprintf(stderr, "%s\n", scene_error());
         context_close(&context); close(listener);

@@ -29,7 +29,7 @@ To package the pinned release runtime, install Python 3 and run:
 python3 tools/store_build.py kxrxh_doodle_jump
 ```
 
-This verifies the runtime and original game downloads and creates
+This verifies the base runtime, host update and original game downloads and creates
 `dist/kxrxh_doodle_jump@<version>.tgz`. Store installs that ready package.
 
 For source development, install Python 3.12+, Node.js, Docker and clang, then run:
@@ -129,6 +129,16 @@ with the verified artifact URL, size and SHA-256, then replace the `catalog`
 release's catalog. Retain required licenses and corresponding GPU worker sources.
 Keep BMW's SDK out of packages.
 
+For a GitHub update to an existing v0.14.1 Store installation, use
+`python3 tools/build_app_patch.py <v0.14.1-app.tgz> <doodle-host> <runtime-licenses>`.
+This packages the host and menu files. Pin its archive in `tools/runtime.json` so
+source builds use the same host.
+
 For performance diagnosis, enable **Show FPS**. **Game** measures completed engine
 frames; **Render** measures renderer frames; **Native** counts compositor callbacks.
 **CPU** shows why GPU drawing is unavailable, and **Last** records display events.
+
+The app log records worker socket errors, native bind failures, and presentation
+mode changes. The GPU worker log records the selected EGL backend and GL
+renderer. A transient native bind failure gets one delayed retry after Store
+restores its surface. VIDEO frames continue during that delay when supported.

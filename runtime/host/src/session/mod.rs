@@ -21,6 +21,7 @@ use std::{
 
 use runner::run_inner;
 
+const BIND_RETRY_DELAY: Duration = Duration::from_millis(1500);
 const PERIOD: Duration = Duration::from_nanos(16_666_667);
 const HELP: &str = "Ring / joystick: steer. Joystick: move menu cursor. Press: select / shoot. Touch sides: hold to steer; touch game: shoot / select.";
 
@@ -54,6 +55,7 @@ struct Ui {
     sheet: bool,
     parked_only: bool,
     show_fps: bool,
+    ring_sensitivity: f64,
     place: Placement,
     origin: [i32; 2],
     renderer: Renderer,
@@ -67,6 +69,7 @@ impl Default for Ui {
             sheet: false,
             parked_only: true,
             show_fps: false,
+            ring_sensitivity: 1.,
             place: Placement {
                 w: 1600.,
                 h: 520.,
@@ -109,6 +112,7 @@ struct Binding {
     id: u32,
     key: SurfaceKey,
     rectangle: [i32; 4],
+    retry: bool,
     stage: &'static str,
     deadline: Instant,
 }
@@ -152,6 +156,8 @@ struct Session {
     last_ccu: Option<Instant>,
     worker: Worker,
     attempted: Option<SurfaceKey>,
+    bind_retry_at: Option<Instant>,
+    logged_worker_error: Option<String>,
     bound_surface: Option<SurfaceKey>,
     binding: Option<Binding>,
     next_binding: u32,
@@ -188,6 +194,8 @@ impl Session {
             last_ccu: None,
             worker,
             attempted: None,
+            bind_retry_at: None,
+            logged_worker_error: None,
             bound_surface: None,
             binding: None,
             next_binding: 0,

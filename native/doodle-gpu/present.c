@@ -434,6 +434,8 @@ struct present *present_create(struct wl_display *display, EGLDisplay egl, EGLCo
     wl_registry_add_listener(p->registry, &registry_listener, p);
     if (roundtrip(p) < 0 || roundtrip(p) < 0 || !p->compositor || !p->application || !p->controller ||
         setup_graphics(p) < 0) {
+        fprintf(stderr, "GPU native presenter: %s\n",
+            p->error[0] ? present_error(p) : "required Wayland/IVI globals missing");
         present_free(&p);
         return NULL;
     }
@@ -494,7 +496,9 @@ int present_bind(struct present *p, const char *renderer_socket, const int recta
         return -1;
     destroy_window(p);
     int pid = renderer_pid(p, renderer_socket);
-    if (pid < 0 || roundtrip(p) < 0)
+    if (pid < 0)
+        return PRESENT_BIND_RENDERER_UNAVAILABLE;
+    if (roundtrip(p) < 0)
         return -1;
     /* Outputs and layer proxies must exist before the compositor sends parent
      * events. */
@@ -550,8 +554,10 @@ int present_bind(struct present *p, const char *renderer_socket, const int recta
         if (dispatch_wait(p, 20) < 0)
             return -1;
     }
-    if (count != 1)
-        return fail(p, "renderer layer challenge did not identify one parent");
+    if (count != 1) {
+        fail(p, "renderer layer challenge did not identify one parent");
+        return count ? -1 : PRESENT_BIND_LAYER_NOT_READY;
+    }
     p->parent = candidate;
     uint32_t id = 0x444a0000u | ((uint32_t)getpid() & 0xffffu);
     for (unsigned attempts = 0; attempts < MAX_OBJECTS; attempts++, id++) {

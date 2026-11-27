@@ -1,4 +1,5 @@
 """Exercise autonomous native sessions through the real process and GPU socket boundaries."""
+from pathlib import Path
 import time
 import unittest
 
@@ -24,6 +25,40 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(session.gpu.binds, [])
             session.pump_until(lambda: len(session.gpu.frames) >= 8)
             self.assertEqual(session.counts[b'GPF1'], 0)
+
+    def test_native_bind_retry_keeps_video_running(self):
+        for reason in ('layer_not_ready', None):
+            with self.subTest(reason=reason), NativeSession(gpu=True, native=True) as session:
+                session.gpu.bind_failures.append(reason)
+                session.set_ui()
+                session.wait_event('video')
+                session.wait_event('presented', timeout=7)
+                first, retry = session.gpu.binds
+                self.assertEqual(first['path'], retry['path'])
+                self.assertEqual(first['rectangle'][2:], retry['rectangle'][2:])
+                self.assertGreaterEqual(retry['frames'] - first['frames'], 2)
+                self.assertEqual(session.gpu.connection_count, 1)
+                if reason:
+                    self.assertIn(reason, Path(session.stderr.name).read_text())
+
+    def test_native_bind_retry_stops_after_second_failure(self):
+        with NativeSession(gpu=True, native=True) as session:
+            session.gpu.bind_failures.extend(['layer_not_ready'] * 2)
+            session.set_ui()
+            session.wait_event('video')
+            session.pump_until(lambda: len(session.gpu.binds) == 2)
+            session.wait_event('video')
+            session.pump_for(2.0)
+            self.assertEqual(len(session.gpu.binds), 2)
+
+    def test_native_bind_permanent_failure_stays_on_video(self):
+        with NativeSession(gpu=True, native=True) as session:
+            session.gpu.bind_failures.append('wayland_unavailable')
+            session.set_ui()
+            session.wait_event('video')
+            session.pump_for(2.0)
+            self.assertEqual(len(session.gpu.binds), 1)
+            self.assertGreater(len(session.gpu.frames), 2)
 
     def test_native_presentation_does_not_require_video_capability(self):
         with NativeSession(gpu=True, native=True) as session:
@@ -73,8 +108,11 @@ class SessionTests(unittest.TestCase):
             session.wait_event('draw', lambda value: any(c[0] == 'video' for c in value['commands']))
             session.gpu.hold_frame()
             session.pump_until(lambda: session.gpu.pending is not None)
-            session.set_ui(renderer=dict(video=False))
-            draw = session.wait_event('draw')
+            # The overlay flag identifies draws produced after the new capabilities arrived.
+            session.set_ui(renderer=dict(video=False), showFps=False)
+            draw = session.wait_event('draw', lambda value: not any(
+                c[0] == 'text' and c[1].endswith(' FPS') for c in value['commands']))
+            self.assertTrue(draw['pending'])
             self.assertFalse(any(c[0] == 'video' for c in draw['commands']),
                              'unsupported VIDEO must not be sent to a renderer that lost that capability')
 
@@ -174,9 +212,12 @@ class SessionTests(unittest.TestCase):
             for field in ('shown', 'focused'):
                 session.set_ui(**{field: False})
                 session.wait_event('lifecycle', lambda value: not value['running'])
-                before = len(session.gpu.frames)
+                # A frame already sent to the worker can complete after the pause.
+                paused_steps = session.wait_event('draw')['steps']
                 session.pump_for(.25)
-                self.assertEqual(len(session.gpu.frames), before, field + ' must stop the original game')
+                self.assertEqual(session.wait_event('draw')['steps'], paused_steps,
+                                 field + ' must stop the original game')
+                before = len(session.gpu.frames)
                 session.set_ui(**{field: True})
                 session.wait_event('lifecycle', lambda value: value['running'])
                 session.pump_until(lambda: len(session.gpu.frames) > before)

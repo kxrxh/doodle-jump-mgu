@@ -127,6 +127,7 @@ pub(super) fn run_inner(
                 .is_some_and(|binding| now >= binding.deadline)
             {
                 session.worker.reset(now, "Store surface binding timed out");
+                session.bind_retry_at = None;
                 session.bound_surface = None;
                 session.force_reset = true;
                 if session

@@ -3,7 +3,7 @@ const assert=require('assert'),fs=require('fs'),path=require('path'),vm=require(
 const record=require('../../kit/runtime/record');
 let session,draw,focus,visibleChange,layout,settingsChange,input,sheet,allowSheet=true,shown=true,focused=true,active=true;
 const commands=[],buttons={},subscriptions={},opened=[],grabs=[],images=[],texts=[],timeouts=[],intervals=[],events={};
-const values={showFps:true,parkedOnly:true},place={x:0,y:0,w:1920,h:720,scale:1.164,ox:71,oy:-38,full:true};
+const values={showFps:true,parkedOnly:true,ringSensitivity:0.5},place={x:0,y:0,w:1920,h:720,scale:1.164,ox:71,oy:-38,full:true};
 class Session {
     constructor(){session=this;this.ready=true;this.dead=false;this.playing=false;this.scenery={sprites:{}};}
     start(){this.started=true;}
@@ -42,6 +42,7 @@ assert(commands.some(command=>command.ui),'Store callbacks forward state to the 
 assert.strictEqual(timeouts.length,0,'display painting must not create an engine-frame timer');
 const first=commands.filter(command=>command.ui).pop().ui;
 assert.strictEqual(first.shown,true);assert.strictEqual(first.focused,true);assert.strictEqual(first.active,true);
+assert.strictEqual(first.ringSensitivity,0.5);
 assert.deepStrictEqual(first.place,place);assert.strictEqual(first.renderer.generation,7);
 assert(first.renderer.source>0&&first.renderer.socket>0);
 assert.strictEqual(grabs.length,0,'native lifecycle alone decides controller ownership');
@@ -59,6 +60,7 @@ assert.deepStrictEqual(grabs,[true]);assert.deepStrictEqual(opened,['GAME']);ass
 focused=false;focus();assert.strictEqual(commands.filter(command=>command.ui).pop().ui.focused,false);
 shown=false;visibleChange();assert.strictEqual(commands.filter(command=>command.ui).pop().ui.shown,false);
 values.showFps=false;settingsChange();assert.strictEqual(commands.filter(command=>command.ui).pop().ui.showFps,false);
+values.ringSensitivity=1.5;settingsChange();assert.strictEqual(commands.filter(command=>command.ui).pop().ui.ringSensitivity,1.5);
 shown=true;focused=true;focus();
 const source=first.renderer.source,socket=first.renderer.socket;
 session.onEvent({type:'binding',id:1,stage:'prepare',source,socket,rectangle:[-9000,-10000,1920,720]});

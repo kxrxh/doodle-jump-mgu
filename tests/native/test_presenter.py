@@ -223,13 +223,14 @@ class PresenterTests(unittest.TestCase):
 
     def test_challenge_and_server_pid_must_both_match_and_be_unique(self):
         started = time.monotonic()
-        self.assertFalse(self.h.bind((0, 0, 1920, 720))['native'])
+        self.assertEqual(self.h.bind((0, 0, 1920, 720)),
+                         {'event': 'bind', 'native': False, 'reason': 'layer_not_ready'})
         self.assertLess(time.monotonic() - started, 2)
         self.h.command('pid 1')
         self.assertFalse(self.h.bind()['native'])
         self.h.command('pid ' + str(self.h.compositor.pid))
         self.h.command('ambiguous')
-        self.assertFalse(self.h.bind()['native'])
+        self.assertEqual(self.h.bind(), {'event': 'bind', 'native': False, 'reason': 'bind_failed'})
         self.assertFalse(any(line.startswith('commit ') for line in self.h.lines))
 
     def test_occupied_native_surface_id_preserves_the_existing_surface(self):

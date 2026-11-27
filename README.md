@@ -12,11 +12,11 @@ Play Doodle Jump on iDrive 7 (MGU), with all themes and sounds.
 3. Install **Doodle Jump**.
 
 Store installs GPU support automatically. Restart the MGU if prompted.
-To update, refresh the repository in Store and install the latest release.
+For v0.14.3, apply the GitHub update to an existing v0.14.1 Store installation. [Update instructions](https://github.com/kxrxh/doodle-jump-mgu/releases/tag/v0.14.3)
 
 ## Controls
 
-- Turn the iDrive ring one click for a small adjustment or several clicks for a wider jump.
+- Turn the iDrive ring one click for a small adjustment or several clicks for a wider jump. Use **Ring sensitivity** in the main menu to change how far each click steers.
 - Press the ring to select or shoot. Use the joystick to move the menu cursor.
 - Hold either side panel to steer with touch. Tap the game to select or shoot.
 

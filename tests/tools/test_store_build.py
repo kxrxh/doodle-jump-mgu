@@ -71,6 +71,20 @@ class StoreBuildTests(unittest.TestCase):
             self.assertEqual({file.relative_to(extracted).as_posix():file.read_bytes()
                               for file in extracted.rglob('*') if file.is_file()},kept)
 
+    def test_release_host_replaces_the_base_runtime_host(self):
+        build=self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);runtime=root/'runtime.pack';apk=root/'game.apk';out=root/'engine.pack'
+            runtime.write_bytes(pack({'doodle-host':b'base host','native.so':b'base library'}))
+            with zipfile.ZipFile(apk,'w'):
+                pass
+            build.assemble(runtime,apk,out,host=b'updated host')
+            data=out.read_bytes();size=struct.unpack_from('<I',data,8)[0];base=12+size
+            files=json.loads(zlib.decompress(data[12:base],-15))['files']
+            for name,value in {'doodle-host':b'updated host','native.so':b'base library'}.items():
+                off,size=files[name]
+                self.assertEqual(zlib.decompress(data[base+off:base+off+size],-15),value)
+
     def test_zip_paths_cannot_escape_the_game_directory(self):
         build=self.module()
         with tempfile.TemporaryDirectory() as directory:

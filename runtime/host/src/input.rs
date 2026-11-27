@@ -90,7 +90,7 @@ impl Controls {
             self.tap(self.cursor[0], self.cursor[1]);
         }
     }
-    pub fn turn(&mut self, delta: f64, now_ms: f64) {
+    fn turn(&mut self, delta: f64, now_ms: f64) {
         if now_ms >= self.ring_until || sign(delta) != sign(self.ring) {
             self.ring = 0.0;
         }
@@ -103,7 +103,15 @@ impl Controls {
         self.tilt = direction;
         self.until = now_ms + 220.0;
     }
-    pub fn raw(&mut self, deflection: f64, push: f64, operation: f64, playing: bool, now_ms: f64) {
+    pub fn raw(
+        &mut self,
+        deflection: f64,
+        push: f64,
+        operation: f64,
+        playing: bool,
+        ring_sensitivity: f64,
+        now_ms: f64,
+    ) {
         self.direction = if deflection == 1.0 || deflection == 2.0 {
             -1.0
         } else if deflection == 7.0 || deflection == 8.0 {
@@ -134,7 +142,7 @@ impl Controls {
             if !playing {
                 self.cursor[0] = bounded(self.cursor[0] + f64::from(delta) * 16.0, 0.0, 543.0);
             } else if self.tilt == 0.0 {
-                self.turn(f64::from(delta), now_ms);
+                self.turn(f64::from(delta) * ring_sensitivity, now_ms);
             }
         }
         let down = push == 1.0 || push == 2.0;

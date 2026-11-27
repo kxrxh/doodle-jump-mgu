@@ -48,6 +48,7 @@ mgu.run({
             return {shown:ui.isVisible('GAME'),focused:!ui.hasFocus || ui.hasFocus('GAME'),
                 active:!!(display && display.active('GAME')),sheet:!!(display && display.sheet),
                 parkedOnly:settings.get('parkedOnly')!==false,showFps:!!settings.get('showFps'),
+                ringSensitivity:settings.get('ringSensitivity'),
                 place:p?{x:p.x,y:p.y,w:p.w,h:p.h,scale:p.scale,ox:p.ox,oy:p.oy,full:!!p.full}:null,
                 renderer:{ready:!!(gpu && gpu.ready),native:!!(gpu && gpu.native),video:!!(gpu && gpu.video),
                     visible:!!(gpu && gpu.visible),onScreen:!!(gpu && gpu.onScreen),generation:gpu && gpu.generation || 0,

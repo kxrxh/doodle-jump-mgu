@@ -223,7 +223,20 @@ impl Worker {
                             if native {
                                 self.replay_controls()?;
                             }
-                            events.push(Event::Bound(native));
+                            let reason = reply.get("reason").map(|reason| {
+                                reason
+                                    .as_str()
+                                    .filter(|code| {
+                                        !code.is_empty()
+                                            && code.len() <= 48
+                                            && code
+                                                .bytes()
+                                                .all(|c| c.is_ascii_lowercase() || c == b'_')
+                                    })
+                                    .unwrap_or("unknown")
+                                    .to_owned()
+                            });
+                            events.push(Event::Bound { native, reason });
                         } else {
                             self.validate_reply(&reply)?;
                             self.pending = None;

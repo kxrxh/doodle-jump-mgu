@@ -39,6 +39,7 @@ impl Ui {
             sheet: flag(value, "sheet", false)?,
             parked_only: flag(value, "parkedOnly", true)?,
             show_fps: flag(value, "showFps", false)?,
+            ring_sensitivity: scalar(value, "ringSensitivity", 1., 0.5, 1.5).unwrap_or(1.),
             ..Self::default()
         };
         if let Some(p) = value.get("place").filter(|v| !v.is_null()) {

@@ -53,6 +53,7 @@ class FakeGpu:
         self.connection = None
         self.connection_count = 0
         self.binds, self.views, self.frames, self.uploads = [], [], [], []
+        self.bind_failures = deque()
         self.cursor_images, self.cursors = [], []
         self.textures = {}
         self.pending = None
@@ -147,9 +148,14 @@ class FakeGpu:
                 rectangle = struct.unpack_from('<4i', body)
                 endpoint = body[16:-1].decode()
                 assert endpoint.startswith('/')
-                self.binds.append(dict(rectangle=rectangle, path=endpoint))
-                self.native = self.native_supported
-                self._send(dict(event='bind', native=self.native))
+                self.binds.append(dict(rectangle=rectangle, path=endpoint, frames=len(self.frames)))
+                fail = bool(self.bind_failures)
+                reason = self.bind_failures.popleft() if fail else 'presenter_unavailable'
+                self.native = self.native_supported and not fail
+                reply = dict(event='bind', native=self.native)
+                if not self.native and reason is not None:
+                    reply['reason'] = reason
+                self._send(reply)
             elif kind == VIEW:
                 assert len(body) == 20
                 self.views.append(struct.unpack('<5i', body))

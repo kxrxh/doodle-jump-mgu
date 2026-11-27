@@ -1,7 +1,7 @@
 {
   "id": "doodle-gpu",
   "kind": "tool",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "title": "Doodle Jump GPU support",
   "description": "Draws Doodle Jump into compositor GPU buffers",
   "mguHmi": [

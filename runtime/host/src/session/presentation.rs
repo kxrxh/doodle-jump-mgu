@@ -1,4 +1,4 @@
-use super::{Binding, Mode, PendingFrame, Result, Session};
+use super::{BIND_RETRY_DELAY, Binding, Mode, PendingFrame, Result, Session};
 use crate::{
     gpu::{self, Event},
     host::{self, FrameRequest, Host},
@@ -36,15 +36,18 @@ impl Session {
         let Some(key) = self.ui.surface(&self.worker) else {
             return Ok(());
         };
-        if self.attempted.as_ref() == Some(&key) {
+        let retry = self.attempted.as_ref() == Some(&key);
+        if retry && self.bind_retry_at.is_none_or(|deadline| now < deadline) {
             return Ok(());
         }
+        self.bind_retry_at = None;
         let rectangle = gpu::challenge(key.rectangle[2], key.rectangle[3])?;
         self.next_binding = self.next_binding.wrapping_add(1).max(1);
         let binding = Binding {
             id: self.next_binding,
             key: key.clone(),
             rectangle,
+            retry,
             stage: "prepare",
             deadline: now + Duration::from_secs(3),
         };
@@ -99,21 +102,42 @@ impl Session {
         for event in self.worker.poll(now) {
             match event {
                 Event::Connected => {
+                    eprintln!("GPU worker: socket connected");
                     self.force_reset = true;
                     self.dirty = true;
                 }
-                Event::Bound(native) => {
+                Event::Bound { native, reason } => {
+                    self.logged_worker_error = None;
                     self.bound_surface = if native {
                         self.binding.as_ref().map(|b| b.key.clone())
                     } else {
                         None
                     };
+                    if !native {
+                        let retry = self
+                            .binding
+                            .as_ref()
+                            .is_some_and(|binding| !binding.retry && binding.stage == "worker")
+                            && matches!(
+                                reason.as_deref(),
+                                None | Some("renderer_unavailable" | "layer_not_ready")
+                            );
+                        if retry {
+                            // Keep the attempted key so VIDEO remains eligible during backoff.
+                            self.bind_retry_at = Some(now + BIND_RETRY_DELAY);
+                        }
+                        let status = if retry { " (one retry scheduled)" } else { "" };
+                        eprintln!(
+                            "GPU native bind failed: {}{status}",
+                            reason
+                                .as_deref()
+                                .unwrap_or("worker did not report a reason")
+                        );
+                    }
                     self.restore(out, now)?;
                 }
-                Event::Disconnected(error) => {
-                    if self.captured_worker.is_some() {
-                        eprintln!("GPU worker: {error}");
-                    }
+                Event::Disconnected => {
+                    self.bind_retry_at = None;
                     self.bound_surface = None;
                     self.pending = None;
                     self.force_reset = true;
@@ -124,11 +148,12 @@ impl Session {
                     }
                 }
                 Event::Frame(frame) => {
+                    self.logged_worker_error = None;
                     if let Some(PendingFrame { key, began, timing }) = self.pending.take() {
                         let current = self.ui.frame_surface(&self.worker);
                         if current.as_ref() == Some(&key) {
                             if frame["mode"] == "native" {
-                                self.mode = Some(Mode::Native);
+                                self.set_mode(Mode::Native);
                                 if frame["presented"] == true && self.running {
                                     self.record_timing(timing, began, now);
                                     self.completed(began, now);
@@ -138,7 +163,7 @@ impl Session {
                                     )?;
                                 }
                             } else {
-                                self.mode = Some(Mode::Video);
+                                self.set_mode(Mode::Video);
                                 if self.running {
                                     self.record_timing(timing, began, now);
                                     self.completed(began, now);
@@ -155,8 +180,25 @@ impl Session {
                 }
             }
         }
+        if let Some(error) = self.worker.last_error()
+            && self.logged_worker_error.as_deref() != Some(error)
+        {
+            eprintln!("GPU worker unavailable: {error}");
+            self.logged_worker_error = Some(error.to_owned());
+        }
         self.sync(host, out, now)?;
         Ok(())
+    }
+    fn set_mode(&mut self, mode: Mode) {
+        if self.mode != Some(mode) {
+            let label = match mode {
+                Mode::Pixels => "CPU",
+                Mode::Video => "VIDEO",
+                Mode::Native => "Native",
+            };
+            eprintln!("GPU presentation: {label}");
+            self.mode = Some(mode);
+        }
     }
     pub(super) fn completed(&mut self, _began: Instant, now: Instant) {
         self.frames += 1;
@@ -269,7 +311,7 @@ impl Session {
         } else {
             out.packet(b"FRM2", update.payload)
                 .map_err(|e| e.to_string())?;
-            self.mode = Some(Mode::Pixels);
+            self.set_mode(Mode::Pixels);
             let end = Instant::now();
             self.record_timing(update.timing, now, end);
             self.completed(now, end);

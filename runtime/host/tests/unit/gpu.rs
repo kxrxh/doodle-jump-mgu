@@ -70,11 +70,9 @@ impl Harness {
             }
         }
         let events = self.reply(peer, json!({"event":"bind","native":native}));
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event,Event::Bound(value) if *value==native))
-        );
+        assert!(events.iter().any(
+            |event| matches!(event,Event::Bound { native: value, reason: None } if *value == native)
+        ));
     }
     fn reply(&mut self, peer: &mut UnixStream, value: Value) -> Vec<Event> {
         peer.write_all(format!("{value}\n").as_bytes()).unwrap();
@@ -202,7 +200,7 @@ fn rejects_unsafe_or_replaced_video_paths_and_bad_sequences() {
         assert!(
             events
                 .iter()
-                .any(|event| matches!(event, Event::Disconnected(_)))
+                .any(|event| matches!(event, Event::Disconnected))
         );
         assert!(!h.worker.ready());
         assert!(!h.worker.pending());
@@ -216,7 +214,7 @@ fn rejects_unsafe_or_replaced_video_paths_and_bad_sequences() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, Event::Disconnected(_)))
+            .any(|event| matches!(event, Event::Disconnected))
     );
 }
 #[test]
@@ -234,7 +232,7 @@ fn validates_native_completion_fields_and_stacked_replies() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, Event::Disconnected(_)))
+            .any(|event| matches!(event, Event::Disconnected))
     );
     let mut h = Harness::new();
     let mut peer = h.connect();
@@ -249,7 +247,7 @@ fn validates_native_completion_fields_and_stacked_replies() {
         h.worker
             .poll(h.now)
             .iter()
-            .any(|event| matches!(event, Event::Disconnected(_)))
+            .any(|event| matches!(event, Event::Disconnected))
     );
 }
 #[test]
@@ -261,7 +259,7 @@ fn bounds_acknowledgements_and_reconnects_after_disconnect() {
         h.worker
             .poll(h.now)
             .iter()
-            .any(|event| matches!(event, Event::Disconnected(_)))
+            .any(|event| matches!(event, Event::Disconnected))
     );
     assert!(h.worker.last_error().unwrap().contains("large"));
     assert!(
@@ -312,7 +310,7 @@ fn times_out_pending_operations_and_stop_cancels_reconnect() {
             h.worker
                 .poll(h.now + Duration::from_millis(limit))
                 .iter()
-                .any(|event| matches!(event, Event::Disconnected(_)))
+                .any(|event| matches!(event, Event::Disconnected))
         );
         assert!(!h.worker.pending());
         h.worker.close();
@@ -474,7 +472,7 @@ fn a_premature_acknowledgement_cannot_release_an_incomplete_frame() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, Event::Disconnected(_)))
+            .any(|event| matches!(event, Event::Disconnected))
     );
     assert!(!events.iter().any(|event| matches!(event, Event::Frame(_))));
 }
@@ -491,7 +489,7 @@ fn sequence_wrap_and_late_worker_start_preserve_completion_order() {
         worker
             .poll(now)
             .iter()
-            .any(|event| matches!(event, Event::Disconnected(_)))
+            .any(|event| matches!(event, Event::Disconnected))
     );
     let listener = UnixListener::bind(&path).unwrap();
     assert!(worker.poll(now + Duration::from_millis(2999)).is_empty());

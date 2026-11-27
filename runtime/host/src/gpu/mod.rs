@@ -25,9 +25,12 @@ const RETRY: Duration = Duration::from_secs(3);
 #[derive(Debug)]
 pub enum Event {
     Connected,
-    Bound(bool),
+    Bound {
+        native: bool,
+        reason: Option<String>,
+    },
     Frame(Value),
-    Disconnected(String),
+    Disconnected,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -314,9 +317,9 @@ impl Worker {
         self.last_view = None;
         self.desired_view = None;
         self.video_path = None;
-        self.last_error = Some(error.clone());
+        self.last_error = Some(error);
         self.retry_at = (!self.closed).then_some(now + RETRY);
-        events.push(Event::Disconnected(error));
+        events.push(Event::Disconnected);
     }
     pub fn close(&mut self) {
         self.closed = true;

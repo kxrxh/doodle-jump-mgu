@@ -1,5 +1,10 @@
 {
   "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.1/runtime-linux-x86_64.pack",
   "sha256": "5768dd118d37ca035f88a941db76bae6d80cae2e756d8f0df62f8955b0fa45fa",
-  "size": 7162535
+  "size": 7162535,
+  "host_patch": {
+    "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.3/doodle-app-update-v0.14.3-linux-x86_64.tar.gz",
+    "sha256": "caeed4ca9d737d88d3b51c79e7c6779db7582ed07f3f6e5e69305cc1e67a6538",
+    "member": "doodle-app-update-v0.14.3/doodle-host"
+  }
 }

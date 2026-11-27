@@ -5,6 +5,10 @@
 #include <stdint.h>
 struct wl_display;
 struct present;
+enum {
+    PRESENT_BIND_RENDERER_UNAVAILABLE = -2,
+    PRESENT_BIND_LAYER_NOT_READY = -3,
+};
 typedef void (*present_done)(void *data, uint32_t timestamp, int presented);
 struct present *present_create(struct wl_display *display, EGLDisplay egl, EGLContext context,
                                EGLConfig config, EGLSurface idle);

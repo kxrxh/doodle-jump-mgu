@@ -189,6 +189,19 @@ fn the_fps_display_reports_zero_when_no_frame_is_completed() {
 }
 
 #[test]
+fn ring_sensitivity_uses_normal_for_missing_or_invalid_values() {
+    for (ui, expected) in [
+        (json!({}), 1.0),
+        (json!({"ringSensitivity":"high"}), 1.0),
+        (json!({"ringSensitivity":2}), 1.0),
+        (json!({"ringSensitivity":0.5}), 0.5),
+        (json!({"ringSensitivity":1.5}), 1.5),
+    ] {
+        assert_eq!(Ui::parse(&ui).unwrap().ring_sensitivity, expected);
+    }
+}
+
+#[test]
 fn invalid_layout_and_socket_inputs_are_rejected() {
     for ui in [
         json!({"place":{"w":0}}),

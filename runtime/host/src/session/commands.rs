@@ -1,4 +1,4 @@
-use super::{Result, Session, Ui, ui::scalar};
+use super::{BIND_RETRY_DELAY, Result, Session, Ui, ui::scalar};
 use crate::host::{self, Host};
 use serde_json::{Value, json};
 use std::{
@@ -21,7 +21,15 @@ impl Session {
             return Ok(false);
         }
         if let Some(ui) = command.get("ui") {
-            self.ui = Ui::parse(ui)?;
+            let ui = Ui::parse(ui)?;
+            let state = |r: &super::Renderer| (r.ready, r.native, r.video, r.generation);
+            if state(&self.ui.renderer) != state(&ui.renderer) {
+                let (ready, native, video, generation) = state(&ui.renderer);
+                eprintln!(
+                    "Store renderer: ready={ready} native={native} video={video} generation={generation}"
+                );
+            }
+            self.ui = ui;
             self.ui_at = now;
             self.dirty = true;
         }
@@ -69,8 +77,14 @@ impl Session {
                             ("DREHGEBER_LANG_GEDRUECKT", 2.),
                         ],
                     );
-                    self.controls
-                        .raw(deflection, push, operation, self.playing, self.ms(now));
+                    self.controls.raw(
+                        deflection,
+                        push,
+                        operation,
+                        self.playing,
+                        self.ui.ring_sensitivity,
+                        self.ms(now),
+                    );
                 } else {
                     self.controls.observe(operation);
                 }
@@ -161,6 +175,11 @@ impl Session {
                             self.bound_surface = None;
                             self.force_reset = true;
                         }
+                        // The fallback gets a full delay even when Store is slow to restore.
+                        self.bind_retry_at = self
+                            .bind_retry_at
+                            .filter(|_| ok && current)
+                            .map(|_| now + BIND_RETRY_DELAY);
                         self.binding = None;
                         self.clock.restart(now);
                         self.dirty = true;
