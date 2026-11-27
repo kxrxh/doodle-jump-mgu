@@ -94,6 +94,9 @@ class SessionTests(unittest.TestCase):
                                     'fallback must keep the completed picture instead of exposing background')
             else:
                 self.fail('CPU fallback never replaced the disconnected worker frame')
+            session.wait_event('video', timeout=10)
+            self.assertEqual(session.gpu.connection_count, 2,
+                             'a real worker disconnect must reconnect and resume VIDEO')
 
     def test_ack_after_pause_preserves_worker_textures_and_binding(self):
         with NativeSession(gpu=True, native=True) as session:
@@ -159,6 +162,8 @@ class SessionTests(unittest.TestCase):
             session.binding_reply(restored, 'restored')
             presented = session.wait_event('presented')
             self.assertEqual((presented['source'], presented['socket']), (2, 2))
+            self.assertEqual(session.gpu.connection_count, 1,
+                             'a renderer restart before worker binding must keep the worker connected')
             draw = session.wait_event('draw')
             self.assertEqual((draw['w'], draw['h'], draw['full']), (1700, 720, True))
 

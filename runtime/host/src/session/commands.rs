@@ -132,27 +132,31 @@ impl Session {
             if let Some(binding) = &self.binding
                 && binding.id == id
             {
+                let current = self.ui.surface(&self.worker).as_ref() == Some(&binding.key);
                 match reply["stage"].as_str() {
                     Some("prepared") if binding.stage == "prepare" => {
-                        let bind =
-                            if ok && self.ui.surface(&self.worker).as_ref() == Some(&binding.key) {
-                                self.worker
-                                    .bind(&self.ui.renderer.path, binding.rectangle, now)?
-                            } else {
-                                false
-                            };
+                        let bind = if ok && current {
+                            self.worker
+                                .bind(&self.ui.renderer.path, binding.rectangle, now)?
+                        } else {
+                            false
+                        };
                         if bind {
                             self.bound_surface = None;
                             self.binding.as_mut().unwrap().stage = "worker";
                         } else {
-                            self.worker.reset(now, "Store surface preparation failed");
+                            // A replaced Store renderer may reply after its surface is gone.
+                            // The worker can keep serving VIDEO if it owns no native surface.
+                            if current || self.worker.native() {
+                                self.worker.reset(now, "Store surface preparation failed");
+                            }
                             self.bound_surface = None;
                             self.force_reset = true;
                             self.restore(out, now)?;
                         }
                     }
                     Some("restored") if binding.stage == "restore" => {
-                        if !ok {
+                        if !ok && (current || self.worker.native()) {
                             self.worker.reset(now, "Store surface restoration failed");
                             self.bound_surface = None;
                             self.force_reset = true;
