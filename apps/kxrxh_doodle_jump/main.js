@@ -151,7 +151,14 @@ mgu.run({
             stopped=true;clearInterval(heartbeat);ctx.controller.grab(false);session.stop();
         }
         process.on('exit',stop);
-        ['SIGINT','SIGTERM'].forEach(signal=>process.on(signal,()=>{stop();process.exit(0);}));
+        function shutdown() {
+            stop();
+            const child=session.child;
+            if (!child || child.exitCode!=null || child.signalCode!=null) { process.exit(0);return; }
+            const timer=setTimeout(()=>{child.kill('SIGKILL');process.exit(0);},2000);
+            child.once('exit',()=>{clearTimeout(timer);process.exit(0);});
+        }
+        ['SIGINT','SIGTERM'].forEach(signal=>process.on(signal,shutdown));
         gameLoop=ctx.loop('GAME',60,()=>{
             reportUI();
             const cv=ctx.canvas(W,H).clear('#fff3e3');

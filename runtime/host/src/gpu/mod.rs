@@ -21,6 +21,8 @@ const MAX_REPLY: usize = 4096;
 const MAX_QUEUE: usize = MAX_FRAME + (1 << 20) + (64 << 10);
 const IO_BUDGET: usize = 1 << 20;
 const RETRY: Duration = Duration::from_secs(3);
+// Binding includes several Wayland roundtrips and an initial EGL swap.
+pub(crate) const BIND_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub enum Event {
@@ -239,7 +241,7 @@ impl Worker {
         self.desired_view = Some([0, 0, 408, 720, 0]);
         self.pending = Some(Pending {
             kind: Kind::Bind,
-            deadline: now + Duration::from_secs(3),
+            deadline: now + BIND_TIMEOUT,
             written: false,
         });
         Ok(true)

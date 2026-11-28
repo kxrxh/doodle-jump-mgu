@@ -4,7 +4,7 @@
     {
       "id": "kxrxh_doodle_jump",
       "kind": "app",
-      "version": "0.14.5",
+      "version": "0.14.6",
       "title": "Doodle Jump",
       "description": "Doodle Jump for MGU7",
       "author": "kxrxh",
@@ -13,21 +13,21 @@
       ],
       "requires": {
         "mgu-render": "0.6.26",
-        "doodle-gpu": "2.1.1"
+        "doodle-gpu": "2.1.2"
       },
       "icon": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/catalog/kxrxh_doodle_jump.png",
       "iconSha256": "5eb833c388867f4d29701358f81687f6cf53a7140eb18376bdf491b679c7b581",
       "artifact": {
-        "name": "kxrxh_doodle_jump@0.14.5.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.5/kxrxh_doodle_jump@0.14.5.tgz",
-        "size": 27135779,
-        "sha256": "8c3f974880582fd082aa5b67b405599d8432a5a59e752b3a6e5315d2c59b2d9f"
+        "name": "kxrxh_doodle_jump@0.14.6.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.6/kxrxh_doodle_jump@0.14.6.tgz",
+        "size": 27136445,
+        "sha256": "1f617adc4cc55972895a86ffbe20fe770afb5d78c7fee9aa43a2d00db5b847a7"
       }
     },
     {
       "id": "doodle-gpu",
       "kind": "tool",
-      "version": "2.1.1",
+      "version": "2.1.2",
       "title": "Doodle Jump GPU support",
       "description": "Draws Doodle Jump into compositor GPU buffers",
       "mguHmi": [
@@ -40,10 +40,10 @@
       "uninstallable": true,
       "author": "kxrxh",
       "artifact": {
-        "name": "doodle-gpu@2.1.1.tgz",
-        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.3/doodle-gpu@2.1.1.tgz",
-        "size": 43238,
-        "sha256": "e50984bba8ce625e2f3be820c762f9619b0a81a27a50797252ae185b78c102c4"
+        "name": "doodle-gpu@2.1.2.tgz",
+        "url": "https://github.com/kxrxh/doodle-jump-mgu/releases/download/v0.14.6/doodle-gpu@2.1.2.tgz",
+        "size": 44034,
+        "sha256": "849014d02fd169c8079249d0af54ae9bc9965ea8078077ab35ec957efc525c7f"
       }
     }
   ]

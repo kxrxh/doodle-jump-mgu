@@ -300,7 +300,7 @@ fn times_out_pending_operations_and_stop_cancels_reconnect() {
         } else {
             h.send(&mut peer);
         }
-        let limit = if bind { 3000 } else { 5000 };
+        let limit = if bind { 10000 } else { 5000 };
         assert!(
             h.worker
                 .poll(h.now + Duration::from_millis(limit - 1))

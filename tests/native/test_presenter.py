@@ -25,7 +25,7 @@ if __name__ == '__main__' and len(sys.argv) > 2 and not sys.argv[1].startswith('
 class PresenterHarness:
     """Run a real worker against a compositor that owns the existing game layer."""
 
-    def __init__(self, binary, mock, capture=True):
+    def __init__(self, binary, mock, capture=True, activated=False):
         self.directory = tempfile.TemporaryDirectory(prefix='doodle-present-')
         self.root = Path(self.directory.name)
         self.renderer = self.root / 'renderer.sock'
@@ -36,10 +36,19 @@ class PresenterHarness:
         self.reader = self.connection = self.worker = self.compositor = None
         self.env = dict(os.environ, XDG_RUNTIME_DIR=str(self.root), WAYLAND_DISPLAY='wayland-doodle',
                         EGL_PLATFORM='wayland', LIBGL_ALWAYS_SOFTWARE='1')
+        listener = None
+        if activated:
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(self.renderer))
+            listener.listen(4)
+            self.env['TEST_RENDERER_FD'] = str(listener.fileno())
         self.compositor = subprocess.Popen([str(mock), self.env['WAYLAND_DISPLAY'],
                                             str(self.renderer), str(self.capture)], env=self.env,
                                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                           stderr=subprocess.PIPE, text=True, bufsize=1)
+                                           stderr=subprocess.PIPE, text=True, bufsize=1,
+                                           pass_fds=(listener.fileno(),) if listener else ())
+        if listener:
+            listener.close()
         self.log_thread = threading.Thread(target=self._read_log, daemon=True)
         self.log_thread.start()
         self.wait_log(lambda line: line.startswith('ready '))
@@ -76,7 +85,15 @@ class PresenterHarness:
             self.connection.close()
         self.connection = socket.socket(socket.AF_UNIX)
         self.connection.settimeout(5)
-        self.connection.connect(str(self.endpoint))
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                self.connection.connect(str(self.endpoint))
+                break
+            except ConnectionRefusedError:
+                if self.worker.poll() is not None or time.monotonic() >= deadline:
+                    raise
+                time.sleep(.01)
         self.reader = self.connection.makefile('rb')
 
     def send_bind(self, challenge=CHALLENGE):
@@ -127,6 +144,13 @@ class PresenterHarness:
 
 @unittest.skipUnless(BINARY and MOCK, 'pass built worker and mock compositor paths')
 class PresenterTests(unittest.TestCase):
+    def test_socket_activation_binds_the_process_holding_the_listener(self):
+        self.h.close()
+        self.h = PresenterHarness(BINARY, MOCK, activated=True)
+        self.assertTrue(self.h.bind()['native'])
+        self.h.command('pid 999999')
+        self.assertFalse(self.h.bind()['native'])
+
     def setUp(self):
         self.h = PresenterHarness(BINARY, MOCK)
 

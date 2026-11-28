@@ -4,6 +4,7 @@
 #include "ivi-application-client-protocol.h"
 #include "ivi-controller-client-protocol.h"
 #include <GLES2/gl2.h>
+#include <dirent.h>
 #include <errno.h>
 #include <math.h>
 #include <poll.h>
@@ -441,7 +442,42 @@ struct present *present_create(struct wl_display *display, EGLDisplay egl, EGLCo
     }
     return p;
 }
-static int renderer_pid(struct present *p, const char *path) {
+static unsigned long listener_inode(const char *path) {
+    FILE *file = fopen("/proc/net/unix", "r");
+    if (!file) return 0;
+    char line[512], name[108];
+    unsigned long flags, inode, found = 0;
+    while (fgets(line, sizeof line, file)) {
+        if (sscanf(line, "%*s %*s %*s %lx %*s %*s %lu %107s", &flags, &inode, name) == 3 &&
+            (flags & 0x10000) && !strcmp(name, path)) {
+            if (found) { found = 0; break; }
+            found = inode;
+        }
+    }
+    fclose(file);
+    return found;
+}
+static int holds_listener(uint32_t pid, unsigned long inode) {
+    if (!inode || !pid) return 0;
+    char directory[64], target[64], expected[64], file[128];
+    snprintf(directory, sizeof directory, "/proc/%u/fd", pid);
+    DIR *fds = opendir(directory);
+    if (!fds) return 0;
+    snprintf(expected, sizeof expected, "socket:[%lu]", inode);
+    struct dirent *entry;
+    int found = 0;
+    while ((entry = readdir(fds))) {
+        if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+        if (snprintf(file, sizeof file, "%s/%s", directory, entry->d_name) >= (int)sizeof file) continue;
+        ssize_t size = readlink(file, target, sizeof target - 1);
+        if (size < 0) continue;
+        target[size] = 0;
+        if (!strcmp(target, expected)) { found = 1; break; }
+    }
+    closedir(fds);
+    return found;
+}
+static int renderer_pid(struct present *p, const char *path, unsigned long *inode) {
     struct sockaddr_un address = {.sun_family = AF_UNIX};
     if (!path || path[0] != '/' || strlen(path) >= sizeof address.sun_path)
         return fail(p, "invalid renderer socket path");
@@ -461,6 +497,8 @@ static int renderer_pid(struct present *p, const char *path) {
         return fail(p, "renderer socket did not answer");
     }
     close(fd);
+    /* Socket activation reports its creator, not the service holding the listener. */
+    *inode = listener_inode(path);
     return peer.pid;
 }
 static void destroy_window(struct present *p) {
@@ -495,7 +533,8 @@ int present_bind(struct present *p, const char *renderer_socket, const int recta
     if (!p)
         return -1;
     destroy_window(p);
-    int pid = renderer_pid(p, renderer_socket);
+    unsigned long inode = 0;
+    int pid = renderer_pid(p, renderer_socket, &inode);
     if (pid < 0)
         return PRESENT_BIND_RENDERER_UNAVAILABLE;
     if (roundtrip(p) < 0)
@@ -542,8 +581,9 @@ int present_bind(struct present *p, const char *renderer_socket, const int recta
                 continue;
             int owned = 0;
             for (unsigned j = 0; j < p->surface_count; j++)
-                owned |= p->surfaces[j].alive && p->surfaces[j].pid == (uint32_t)pid &&
-                         p->surfaces[j].parent == layer->proxy;
+                owned |= p->surfaces[j].alive && p->surfaces[j].parent == layer->proxy &&
+                         (p->surfaces[j].pid == (uint32_t)pid ||
+                          holds_listener(p->surfaces[j].pid, inode));
             if (owned) {
                 candidate = layer;
                 count++;

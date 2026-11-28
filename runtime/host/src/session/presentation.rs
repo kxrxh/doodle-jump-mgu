@@ -11,6 +11,14 @@ use std::{
 };
 
 impl Session {
+    fn native_failed(&self, key: &super::SurfaceKey) -> bool {
+        self.failed_native.as_ref().is_some_and(|failed| {
+            failed.source == key.source
+                && failed.socket == key.socket
+                && failed.generation == key.generation
+                && failed.rectangle == key.rectangle
+        })
+    }
     pub(super) fn bound(&self) -> bool {
         self.worker.native()
             && self.bound_surface.is_some()
@@ -36,6 +44,9 @@ impl Session {
         let Some(key) = self.ui.surface(&self.worker) else {
             return Ok(());
         };
+        if self.native_failed(&key) {
+            return Ok(());
+        }
         let retry = self.attempted.as_ref() == Some(&key);
         if retry && self.bind_retry_at.is_none_or(|deadline| now < deadline) {
             return Ok(());
@@ -82,10 +93,9 @@ impl Session {
             return false;
         }
         if self.ui.active
-            && self
-                .ui
-                .surface(&self.worker)
-                .is_some_and(|key| self.attempted.as_ref() != Some(&key))
+            && self.ui.surface(&self.worker).is_some_and(|key| {
+                !self.native_failed(&key) && self.attempted.as_ref() != Some(&key)
+            })
         {
             return false;
         }
@@ -137,6 +147,14 @@ impl Session {
                     self.restore(out, now)?;
                 }
                 Event::Disconnected => {
+                    if self.worker.last_error() == Some("GPU worker frame timed out")
+                        && self.bound_surface.is_some()
+                    {
+                        self.failed_native = self.bound_surface.clone();
+                        eprintln!(
+                            "Native frame timed out; using fallback until the Store renderer changes"
+                        );
+                    }
                     self.bind_retry_at = None;
                     self.bound_surface = None;
                     self.pending = None;
@@ -153,8 +171,9 @@ impl Session {
                         let current = self.ui.frame_surface(&self.worker);
                         if current.as_ref() == Some(&key) {
                             if frame["mode"] == "native" {
-                                self.set_mode(Mode::Native);
                                 if frame["presented"] == true && self.running {
+                                    self.failed_native = None;
+                                    self.set_mode(Mode::Native);
                                     self.record_timing(timing, began, now);
                                     self.completed(began, now);
                                     host::event(

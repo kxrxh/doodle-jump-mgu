@@ -7,6 +7,53 @@ from session_fixture import NativeSession
 
 
 class SessionTests(unittest.TestCase):
+    def test_native_bind_gets_a_fresh_deadline_after_store_preparation(self):
+        with NativeSession(gpu=True, native=True, auto_bind=False) as session:
+            send = session.gpu._send
+            def delayed_bind(value):
+                if value.get('event') == 'bind':
+                    time.sleep(1.2)
+                send(value)
+            session.gpu._send = delayed_bind
+            session.set_ui()
+            prepared = session.wait_event('binding', lambda value: value['stage'] == 'prepare')
+            session.pump_for(2.1)
+            session.set_ui(renderer=dict(visible=False))
+            session.binding_reply(prepared, 'prepared')
+            restored = session.wait_event('binding', lambda value: value['stage'] == 'restore')
+            session.set_ui(renderer=dict(visible=True))
+            session.binding_reply(restored, 'restored')
+            session.wait_event('presented', timeout=4)
+            self.assertEqual(session.gpu.connection_count, 1)
+
+    def test_native_frame_timeout_uses_video_until_the_renderer_changes(self):
+        with NativeSession(gpu=True, native=True) as session:
+            session.set_ui()
+            session.wait_event('presented')
+            session.gpu.hold_frame()
+            session.pump_until(lambda: session.gpu.pending is not None)
+            session.wait_event('video', timeout=12)
+            self.assertEqual(session.gpu.connection_count, 2)
+            self.assertEqual(len(session.gpu.binds), 1)
+            session.pump_for(.3)
+            session.set_ui(renderer=dict(generation=2))
+            session.wait_event('presented')
+            self.assertEqual(len(session.gpu.binds), 2)
+
+    def test_unpresented_native_frame_keeps_the_last_cpu_picture(self):
+        with NativeSession(gpu=True, native=True) as session:
+            session.set_ui(active=False)
+            session.wait_event('draw', lambda value: value.get('mode') == 'cpu')
+            session.gpu.hold_frame()
+            session.set_ui(active=True)
+            session.pump_until(lambda: session.gpu.pending is not None)
+            session.set_ui(renderer=dict(visible=False))
+            session.pump_until(lambda: bool(session.gpu.views and not session.gpu.views[-1][4]))
+            session.gpu.release_frame()
+            draw = session.wait_event('draw', lambda value: not value.get('pending'))
+            self.assertEqual(draw['mode'], 'cpu')
+            self.assertTrue(any(command[:2] == ['image', 1] for command in draw['commands']))
+
     def test_parked_only_rejects_invalid_speed_and_recovers(self):
         with NativeSession() as session:
             session.send(vehicle=dict(speedVehicleCentreOfGravity=0))

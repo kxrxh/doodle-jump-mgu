@@ -742,10 +742,14 @@ int main(int argc, char **argv) {
         return 1;
     strcpy(address.sun_path, argv[2]);
     strcpy(renderer_path, argv[2]);
-    renderer_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (renderer_fd < 0 || bind(renderer_fd, (struct sockaddr *)&address, sizeof address) ||
-        listen(renderer_fd, 4))
-        return 1;
+    const char *activated = getenv("TEST_RENDERER_FD");
+    if (activated) renderer_fd = atoi(activated);
+    else {
+        renderer_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (renderer_fd < 0 || bind(renderer_fd, (struct sockaddr *)&address, sizeof address) ||
+            listen(renderer_fd, 4))
+            return 1;
+    }
     if (strcmp(argv[3], "/dev/null"))
         snprintf(snapshot_path, sizeof snapshot_path, "%s", argv[3]);
     struct wl_event_loop *loop = wl_display_get_event_loop(display);

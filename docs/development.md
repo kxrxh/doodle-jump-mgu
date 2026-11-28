@@ -131,6 +131,9 @@ with the verified artifact URL, size and SHA-256, then replace the `catalog`
 release's catalog. Retain required licenses and corresponding GPU worker sources.
 Keep BMW's SDK out of packages.
 
+See [hardware findings](hardware-validation.md) for the on-car observations,
+recovery behavior, and cold-start checks still required.
+
 For performance diagnosis, enable **Show FPS**. **Game** measures completed engine
 frames; **Render** measures renderer frames; **Native** counts compositor callbacks.
 **CPU** shows why GPU drawing is unavailable, and **Last** records display events.

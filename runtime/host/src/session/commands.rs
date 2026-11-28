@@ -156,7 +156,9 @@ impl Session {
                         };
                         if bind {
                             self.bound_surface = None;
-                            self.binding.as_mut().unwrap().stage = "worker";
+                            let binding = self.binding.as_mut().unwrap();
+                            binding.stage = "worker";
+                            binding.deadline = now + crate::gpu::BIND_TIMEOUT;
                         } else {
                             // A replaced Store renderer may reply after its surface is gone.
                             // The worker can keep serving VIDEO if it owns no native surface.

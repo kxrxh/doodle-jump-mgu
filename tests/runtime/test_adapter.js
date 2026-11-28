@@ -4,6 +4,7 @@ const record=require('../../kit/runtime/record');
 let session,draw,focus,visibleChange,layout,settingsChange,input,sheet,allowSheet=true,shown=true,focused=true,active=true;
 const commands=[],buttons={},subscriptions={},opened=[],grabs=[],images=[],texts=[],timeouts=[],intervals=[],events={};
 const values={showFps:true,parkedOnly:true,ringSensitivity:0.5},place={x:0,y:0,w:1920,h:720,scale:1.164,ox:71,oy:-38,full:true};
+let exits=0;
 class Session {
     constructor(){session=this;this.ready=true;this.dead=false;this.playing=false;this.scenery={sprites:{}};}
     start(){this.started=true;}
@@ -33,9 +34,9 @@ const dependencies={
 };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../apps/kxrxh_doodle_jump/main.js'),'utf8'),{
     require:name=>{assert(dependencies[name],name);return dependencies[name];},
-    Date:{now:()=>1000},setTimeout:fn=>{timeouts.push(fn);return timeouts.length;},clearTimeout(){},
+    Date:{now:()=>1000},setTimeout:(fn,ms)=>{fn.ms=ms;timeouts.push(fn);return timeouts.length;},clearTimeout(){},
     setInterval:(fn,ms)=>{intervals.push([fn,ms]);return intervals.length;},clearInterval(){},
-    process:{on:(name,fn)=>{events[name]=fn;},exit(){}},
+    process:{on:(name,fn)=>{events[name]=fn;},exit(){exits++;}},
 });
 draw();
 assert(commands.some(command=>command.ui),'Store callbacks forward state to the native lifecycle');
@@ -108,4 +109,10 @@ events.exit();assert.strictEqual(session.stopped,true);
 assert.strictEqual(placements.length,beforeExit+1,'normal shutdown restores a pending Store placement challenge');
 assert.strictEqual(placements[placements.length-1].x,0);assert.strictEqual(shows[shows.length-1],true);
 assert.strictEqual(intervals.length,1);assert.strictEqual(intervals[0][1],200,'the only JS timer reports Store liveness');
+const child=session.child=new EventEmitter(),kills=[];
+child.exitCode=null;child.signalCode=null;child.kill=signal=>kills.push(signal);
+events.SIGTERM();
+assert.strictEqual(exits,0,'signal shutdown must let the engine stop before Node exits');
+const forced=timeouts.pop();assert.strictEqual(forced.ms,2000);
+forced();assert.deepStrictEqual(kills,['SIGKILL']);assert.strictEqual(exits,1);
 console.log('Store adapter state, native lifecycle effects, renderer binding, dialogs, drawing and shutdown: passed');
